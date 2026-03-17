@@ -19,16 +19,13 @@ REF_UPC_COL = "Case UPC"
 REF_LP_COL  = "DBW Group"                            # LP in reference files
 EVENT_LP_COL = "L5 Promoted Product Group Code"      # LP in events files
 
-# Event columns to display (we'll only use those that exist)
+# Event columns to display (we'll only use those that exist when toggle is OFF)
 EVENT_DISPLAY_COLS = [
-    "Promo ID", "Promo Name", "Promo Status",
-    "Tactic Type", "Discount Type",
-    "Tactic Order Start Date", "Tactic Order End Date",
-    "Tactic Ship Start Date", "Tactic Ship End Date",
+    "Tactic ID", "Promo ID", "L6 Planning Account",
+    "Tactic Type", "L5 Promoted Product Group",
+    "Payment Type", "Promo Name", "Discount Type",
     "Tactic Performance Start Date", "Tactic Performance End Date",
-    "L6 Planning Account", "L5 Promoted Product Group",
-    "Planned Spend $", "Settled Spend $", "Accrued Liability $", "Remaining Spend $",
-    "Discount Rate", "Payment Type", "Fiscal Year"
+    "Discount Rate", "Settled Spend $", "Planned Spend $", "Remaining Spend $",
 ]
 
 # Ensure folders exist
@@ -102,6 +99,13 @@ def get_events_for_lps(events_view: pd.DataFrame, lps: list) -> pd.DataFrame:
     filt = events_view[EVENT_LP_COL].astype(str).isin([str(x) for x in lps])
     return events_view.loc[filt].copy()
 
+# =========================== Session State ============================
+# Persist selections & search submission across reruns
+if "selected_lps_from_result" not in st.session_state:
+    st.session_state.selected_lps_from_result = []
+if "search_submitted" not in st.session_state:
+    st.session_state.search_submitted = False
+
 # ================== Step 1: Convert Reference Excels ==================
 ref_csv_list = convert_excels_to_csv(ref_folder, ref_csv_folder)
 
@@ -119,9 +123,9 @@ if not ref_csv_list:
 selected_ref_csvs = st.multiselect(
     "Select reference CSV file(s) to search",
     ref_csv_list,
-    default=ref_csv_list
+    default=ref_csv_list,
+    key="selected_ref_csvs"
 )
-
 if not selected_ref_csvs:
     st.warning("Please select at least one reference CSV file")
     st.stop()
@@ -137,7 +141,8 @@ else:
     selected_events_csvs = st.multiselect(
         "Select events CSV file(s) to include",
         events_csv_list,
-        default=events_csv_list
+        default=events_csv_list,
+        key="selected_events_csvs"
     )
 
 # =================== Step 5: Load Reference Database ==================
@@ -168,37 +173,52 @@ if selected_events_csvs:
         st.warning("Selected events CSVs loaded empty.")
         events_view = pd.DataFrame()
     else:
-        # Normalize and trim to a tidy display set
-        events_db[EVENT_LP_COL] = events_db[EVENT_LP_COL].astype(str).str.strip() \
-            if EVENT_LP_COL in events_db.columns else None
-
-        if EVENT_LP_COL not in events_db.columns:
+        # Normalize LP
+        if EVENT_LP_COL in events_db.columns:
+            events_db[EVENT_LP_COL] = events_db[EVENT_LP_COL].astype(str).str.strip()
+        else:
             st.error(
                 f"Events CSV(s) missing the LP column `{EVENT_LP_COL}`.\n\n"
                 f"Columns found (first file): {', '.join(events_db.columns[:30])} ..."
             )
-            events_view = pd.DataFrame()
+            events_db = pd.DataFrame()
+
+        # ---- Toggle for All vs Curated columns ----
+        if not events_db.empty and EVENT_LP_COL in events_db.columns:
+            show_all = st.checkbox("Show all event columns", value=True, key="show_all_cols")
+            if show_all:
+                events_view = events_db.copy()
+            else:
+                events_view = safe_subset(events_db, [EVENT_LP_COL] + EVENT_DISPLAY_COLS)
         else:
-            # Only show sensible columns if present
-            events_view = safe_subset(events_db, [EVENT_LP_COL] + EVENT_DISPLAY_COLS)
+            events_view = pd.DataFrame()
 else:
     events_view = pd.DataFrame()
 
-# ======================== Step 7: User Inputs =========================
-c1, c2 = st.columns(2)
-with c1:
-    upc_input = st.text_input("Enter UPC(s) (space-separated, optional)")
-with c2:
-    lp_input = st.text_input("Enter LP(s) (space-separated, optional)")
+# ======================== Step 7: Query Inputs ========================
+# Wrap inputs in a form so typing doesn't rerun the whole app
+with st.form("search_form", clear_on_submit=False):
+    c1, c2 = st.columns(2)
+    with c1:
+        upc_input = st.text_input("Enter UPC(s) (space-separated, optional)", key="upc_input")
+    with c2:
+        lp_input = st.text_input("Enter LP(s) (space-separated, optional)", key="lp_input")
 
-upc_list = [str(u).strip().zfill(5) for u in upc_input.split() if str(u).strip()]
-lp_list_input = [s.strip() for s in lp_input.split() if s.strip()]
+    submitted = st.form_submit_button("Search")
+    if submitted:
+        if not upc_input and not lp_input:
+            st.warning("Please enter at least a UPC or an LP.")
+            st.stop()
+        # Mark that we have an active search
+        st.session_state.search_submitted = True
 
 # =================== Step 8: Search & Master–Detail ===================
-if st.button("Search"):
-    if not upc_input and not lp_input:
-        st.warning("Please enter at least a UPC or an LP.")
-        st.stop()
+# Only render results after a search is submitted (prevents jumping)
+if st.session_state.search_submitted:
+
+    # Parse inputs for the current render
+    upc_list = [str(u).strip().zfill(5) for u in st.session_state.get("upc_input", "").split() if str(u).strip()]
+    lp_list_input = [s.strip() for s in st.session_state.get("lp_input", "").split() if s.strip()]
 
     # ---- Reference filter ----
     ref_view = reference_db.copy()
@@ -210,9 +230,8 @@ if st.button("Search"):
     has_ref = not ref_view.empty
     if has_ref:
         st.subheader("Reference Matches")
-        st.dataframe(ref_view, use_container_width=True)
-        path_ref = to_csv(ref_view, "search_result_reference.csv")
-    
+        st.dataframe(ref_view, use_container_width=True, height=350)
+        _ = to_csv(ref_view, "search_result_reference.csv")
     else:
         st.info("No matching results found in reference files.")
 
@@ -221,14 +240,26 @@ if st.button("Search"):
     st.caption("Pick LP(s) from the reference results, or use the LP you entered above.")
 
     lps_from_ref = sorted(ref_view[REF_LP_COL].dropna().astype(str).unique()) if has_ref else []
-    selected_lps_from_result = st.multiselect(
+
+    # Persist LP selection via session state so it survives reruns
+    def _on_lp_change():
+        st.session_state.selected_lps_from_result = st.session_state._lp_picker
+
+    # Determine initial defaults:
+    # - Use existing persisted selection if present
+    # - Else seed with input LPs
+    default_lps = st.session_state.selected_lps_from_result or lp_list_input
+
+    st.multiselect(
         "LP(s) from current reference results",
-        lps_from_ref,
-        default=(lp_list_input if (lp_list_input and not lps_from_ref) else [])
+        lps_from_ref if lps_from_ref else default_lps,
+        default=[lp for lp in default_lps if (not lps_from_ref) or (lp in lps_from_ref)],
+        key="_lp_picker",
+        on_change=_on_lp_change
     )
 
-    # Determine which LPs to show events for
-    effective_lps = selected_lps_from_result if selected_lps_from_result else lp_list_input
+    # Effective LPs to show events for
+    effective_lps = st.session_state.selected_lps_from_result or lp_list_input
 
     # ---- Events view (independent of whether reference matched) ----
     if events_view.empty:
@@ -240,7 +271,7 @@ if st.button("Search"):
             if events_match.empty:
                 st.info(f"No events found for LP(s): {', '.join(effective_lps)}")
             else:
-                st.dataframe(events_match, use_container_width=True)
-                path_evt = to_csv(events_match, "search_result_events.csv")
+                st.dataframe(events_match, use_container_width=True, height=500)
+                _ = to_csv(events_match, "search_result_events.csv")
         else:
             st.info("Select LP(s) above or enter LP(s) to view connected events.")
