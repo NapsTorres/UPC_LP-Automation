@@ -45,6 +45,8 @@ st.write(f"Loaded reference database: {len(database)} rows")
 # --- Step 4: User input ---
 upc_input = st.text_input("Enter UPC (optional)")
 lp_input = st.text_input("Enter LP (optional)")
+# upc_list = [str(u).strip().zfill(5) for u in upc_input.split(",") if u.strip()]
+# lp_list = [str(l).strip() for l in lp_input.split(",") if l.strip()]
 
 # --- Step 5: Search on button click ---
 if st.button("Search"):
@@ -56,7 +58,10 @@ if st.button("Search"):
             df_search = df_search[df_search["Case UPC"].str.contains(str(upc_input).strip().zfill(5), na=False)]
         if lp_input:
             df_search = df_search[df_search["DBW Group"].str.contains(str(lp_input).strip(), na=False)]
-        
+        # if upc_list:
+        #     df_search = df_search[df_search["Case UPC"].isin(upc_list)]
+        # if lp_list:
+        #     df_search = df_search[df_search["Primary PG"].isin(lp_list)]
         if df_search.empty:
             st.info("No matching results found")
         else:
