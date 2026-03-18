@@ -395,3 +395,5 @@ if st.session_state.search_submitted:
         st.dataframe(df_ship_show, use_container_width=True, height=500, hide_index=True)
         path_out = to_csv(df_ship_show, "shipment_validation_filtered.csv")
         st.caption(f"Saved filtered shipments to: `{path_out}`")
+
+        
