@@ -350,50 +350,81 @@ if st.session_state.search_submitted:
             path_ev = to_csv(df_events_show, "search_result_events.csv")
             st.caption(f"Saved filtered events to: `{path_ev}`")
 
-    # --------------------------- Shipment Validation ---------------------------
-    st.markdown("---")
-    st.header("Shipment Validation")
+# --------------------------- Shipment Validation ---------------------------
+st.markdown("---")
+st.header("Shipment Validation")
 
-    if shipments_db.empty:
-        st.info("No shipment data loaded yet. Drop Excel files into the 'shipments' folder.")
+if shipments_db.empty:
+    st.info("No shipment data loaded yet. Drop Excel files into the 'shipments' folder.")
+else:
+    shipments_view = shipments_db.copy()
+
+    # Pull connected Event Tactic IDs from session
+    event_tactics_linked = st.session_state.get("linked_event_tactics", [])
+
+    # 1) Filter shipments by Tactic ID ONLY
+    if not event_tactics_linked:
+        st.info("No connected event Tactic ID(s) detected.")
+        shipments_view = shipments_view.iloc[0:0]
+    elif SHIP_TACTIC_COL in shipments_view.columns:
+        shipments_view[SHIP_TACTIC_COL] = shipments_view[SHIP_TACTIC_COL].astype(str).str.strip()
+        shipments_view = shipments_view[
+            shipments_view[SHIP_TACTIC_COL].isin(event_tactics_linked)
+        ]
     else:
-        shipments_view = shipments_db.copy()
+        st.warning("TACTIC ID column not found in shipment data.")
+        shipments_view = shipments_view.iloc[0:0]
 
-        # Pull LP(s) + connected event Tactic IDs from session
-        effective_lps_linked = st.session_state.get("linked_effective_lps", [])
-        event_tactics_linked = st.session_state.get("linked_event_tactics", [])
+    # 2) Discover ALL LPs present for the selected Tactic(s)
+    if not shipments_view.empty:
+        lp_coal_series = (
+            coalesce_series(shipments_view, SHIP_LP_ALIASES)
+            .astype(str)
+            .str.strip()
+        )
 
-        # 1) Filter by LP(s) from results (coalesce across both LP alias columns)
-        if effective_lps_linked:
-            lp_coal = coalesce_series(shipments_view, SHIP_LP_ALIASES).astype(str).str.strip()
-            shipments_view = shipments_view[lp_coal.isin(effective_lps_linked)]
+        available_lps = sorted(lp_coal_series.dropna().unique().tolist())
+
+        selected_ship_lps = st.multiselect(
+            "Filter by LP(s) found in shipments for this Tactic",
+            options=available_lps,
+            default=available_lps
+        )
+
+        # 3) Apply LP selection (if any)
+        if selected_ship_lps:
+            shipments_view = shipments_view[
+                lp_coal_series.isin(selected_ship_lps)
+            ]
         else:
-            st.info("No LP(s) from results available to filter shipments.")
             shipments_view = shipments_view.iloc[0:0]
+    else:
+        st.info("No shipments found for the selected Tactic(s).")
 
-        # 2) Filter by connected Events' Tactic IDs
-        if not shipments_view.empty:
-            if event_tactics_linked and SHIP_TACTIC_COL in shipments_view.columns:
-                shipments_view[SHIP_TACTIC_COL] = shipments_view[SHIP_TACTIC_COL].astype(str).str.strip()
-                shipments_view = shipments_view[shipments_view[SHIP_TACTIC_COL].isin(event_tactics_linked)]
-            else:
-                st.info("No connected event Tactic ID(s) detected; shipments filtered to none.")
-                shipments_view = shipments_view.iloc[0:0]
+    # 4) Sort by LP → TACTIC ID (unchanged)
+    if not shipments_view.empty:
+        shipments_view["__LP_SORT__"] = (
+            coalesce_series(shipments_view, SHIP_LP_ALIASES)
+            .astype(str)
+            .str.strip()
+        )
 
-        # 3) Sort by coalesced LP -> TACTIC ID (as requested)
-        if not shipments_view.empty:
-            shipments_view["__LP_SORT__"] = coalesce_series(shipments_view, SHIP_LP_ALIASES).astype(str).str.strip()
-            sort_cols = ["__LP_SORT__"] + ([SHIP_TACTIC_COL] if SHIP_TACTIC_COL in shipments_view.columns else [])
-            shipments_view = shipments_view.sort_values(sort_cols, ascending=[True] * len(sort_cols), kind="mergesort")
-            shipments_view.drop(columns=["__LP_SORT__"], inplace=True, errors="ignore")
+        sort_cols = ["__LP_SORT__", SHIP_TACTIC_COL]
+        shipments_view = shipments_view.sort_values(
+            sort_cols,
+            ascending=True,
+            kind="mergesort"
+        )
 
-        # 4) Keep ALL shipment columns, but order them to your exact header first
-        df_ship_show = drop_index_like_columns(shipments_view)
-        df_ship_show = reorder_columns(df_ship_show, SHIP_ALL_COLUMNS)
+        shipments_view.drop(columns="__LP_SORT__", inplace=True, errors="ignore")
 
-        # Display (no index), then export (no index, no index-like columns)
-        st.dataframe(df_ship_show, use_container_width=True, height=500, hide_index=True)
-        path_out = to_csv(df_ship_show, "shipment_validation_filtered.csv")
-        st.caption(f"Saved filtered shipments to: `{path_out}`")
+    # 5) Keep ALL columns, reorder to your canonical shipment header
+    df_ship_show = drop_index_like_columns(shipments_view)
+    df_ship_show = reorder_columns(df_ship_show, SHIP_ALL_COLUMNS)
+
+    st.dataframe(df_ship_show, use_container_width=True, height=500, hide_index=True)
+
+    path_out = to_csv(df_ship_show, "shipment_validation_filtered.csv")
+    st.caption(f"Saved filtered shipments to: `{path_out}`")
 
         
