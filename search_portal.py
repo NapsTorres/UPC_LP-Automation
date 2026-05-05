@@ -359,49 +359,61 @@ if shipments_db.empty:
 else:
     shipments_view = shipments_db.copy()
 
-    # Pull connected Event Tactic IDs from session
+    # Pull LP(s) + connected event Tactic IDs from session
+    effective_lps_linked = st.session_state.get("linked_effective_lps", [])
     event_tactics_linked = st.session_state.get("linked_event_tactics", [])
 
-    # 1) Filter shipments by Tactic ID ONLY
-    if not event_tactics_linked:
-        st.info("No connected event Tactic ID(s) detected.")
-        shipments_view = shipments_view.iloc[0:0]
-    elif SHIP_TACTIC_COL in shipments_view.columns:
-        shipments_view[SHIP_TACTIC_COL] = shipments_view[SHIP_TACTIC_COL].astype(str).str.strip()
-        shipments_view = shipments_view[
-            shipments_view[SHIP_TACTIC_COL].isin(event_tactics_linked)
-        ]
+    # ---------------------------------------------------------
+    # LP FILTER DROPDOWN (LIKE LP RESULT SELECTOR)
+    # ---------------------------------------------------------
+    all_shipment_lps = (
+        coalesce_series(shipments_view, SHIP_LP_ALIASES)
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .unique()
+        .tolist()
+    )
+    all_shipment_lps = sorted(all_shipment_lps)
+
+    lp_filter_options = ["ALL"] + all_shipment_lps
+    default_lp_selection = effective_lps_linked if effective_lps_linked else ["ALL"]
+
+    selected_shipment_lps = st.multiselect(
+        "Filter Shipments by LP(s)",
+        options=lp_filter_options,
+        default=default_lp_selection
+    )
+
+    # ---------------------------------------------------------
+    # 1) FILTER BY LP(s)
+    # ---------------------------------------------------------
+    lp_coal = coalesce_series(shipments_view, SHIP_LP_ALIASES).astype(str).str.strip()
+
+    if selected_shipment_lps:
+        if "ALL" not in selected_shipment_lps:
+            shipments_view = shipments_view[lp_coal.isin(selected_shipment_lps)]
     else:
-        st.warning("TACTIC ID column not found in shipment data.")
         shipments_view = shipments_view.iloc[0:0]
 
-    # 2) Discover ALL LPs present for the selected Tactic(s)
+    # ---------------------------------------------------------
+    # 2) FILTER BY CONNECTED EVENT TACTIC ID(s)
+    # ---------------------------------------------------------
     if not shipments_view.empty:
-        lp_coal_series = (
-            coalesce_series(shipments_view, SHIP_LP_ALIASES)
-            .astype(str)
-            .str.strip()
-        )
-
-        available_lps = sorted(lp_coal_series.dropna().unique().tolist())
-
-        selected_ship_lps = st.multiselect(
-            "Filter by LP(s) found in shipments for this Tactic",
-            options=available_lps,
-            default=available_lps
-        )
-
-        # 3) Apply LP selection (if any)
-        if selected_ship_lps:
+        if event_tactics_linked and SHIP_TACTIC_COL in shipments_view.columns:
+            shipments_view[SHIP_TACTIC_COL] = (
+                shipments_view[SHIP_TACTIC_COL].astype(str).str.strip()
+            )
             shipments_view = shipments_view[
-                lp_coal_series.isin(selected_ship_lps)
+                shipments_view[SHIP_TACTIC_COL].isin(event_tactics_linked)
             ]
         else:
+            st.info("No connected event Tactic ID(s) detected; shipments filtered to none.")
             shipments_view = shipments_view.iloc[0:0]
-    else:
-        st.info("No shipments found for the selected Tactic(s).")
 
-    # 4) Sort by LP → TACTIC ID (unchanged)
+    # ---------------------------------------------------------
+    # 3) SORT BY LP → TACTIC ID
+    # ---------------------------------------------------------
     if not shipments_view.empty:
         shipments_view["__LP_SORT__"] = (
             coalesce_series(shipments_view, SHIP_LP_ALIASES)
@@ -409,22 +421,66 @@ else:
             .str.strip()
         )
 
-        sort_cols = ["__LP_SORT__", SHIP_TACTIC_COL]
+        sort_cols = ["__LP_SORT__"]
+        if SHIP_TACTIC_COL in shipments_view.columns:
+            sort_cols.append(SHIP_TACTIC_COL)
+
         shipments_view = shipments_view.sort_values(
             sort_cols,
-            ascending=True,
+            ascending=[True] * len(sort_cols),
             kind="mergesort"
         )
 
-        shipments_view.drop(columns="__LP_SORT__", inplace=True, errors="ignore")
+        shipments_view.drop(columns=["__LP_SORT__"], inplace=True, errors="ignore")
 
-    # 5) Keep ALL columns, reorder to your canonical shipment header
+    # ---------------------------------------------------------
+    # 4) KEEP ALL COLUMNS, REORDER TO EXACT HEADER ORDER
+    # ---------------------------------------------------------
     df_ship_show = drop_index_like_columns(shipments_view)
     df_ship_show = reorder_columns(df_ship_show, SHIP_ALL_COLUMNS)
 
-    st.dataframe(df_ship_show, use_container_width=True, height=500, hide_index=True)
 
-    path_out = to_csv(df_ship_show, "shipment_validation_filtered.csv")
-    st.caption(f"Saved filtered shipments to: `{path_out}`")
+# ---------------------------------------------------------
+    # 5) BUILD FILENAME: <TACTIC_ID>_POP.csv
+    # ---------------------------------------------------------
+    tactic_for_filename = None
+    if event_tactics_linked:
+        tactic_for_filename = str(event_tactics_linked[0]).strip()
 
-        
+        if len(event_tactics_linked) > 1:
+            st.warning(
+                "Multiple Tactic IDs detected. "
+                "Download file name uses the first Tactic ID only."
+            )
+
+    if tactic_for_filename:
+        safe_tactic = re.sub(r"[^\w\-]", "", tactic_for_filename)
+        filename = f"{safe_tactic}_POP.csv"
+    else:
+        filename = "UNKNOWN_TACTIC_POP.csv"
+
+    # ---------------------------------------------------------
+    # ✅ TOP DOWNLOAD BUTTON (ABOVE TABLE)
+    # ---------------------------------------------------------
+    csv_data = df_ship_show.to_csv(index=False).encode("utf-8")
+
+    st.download_button(
+        label="⬇️ Download Shipment POP File",
+        data=csv_data,
+        file_name=filename,
+        mime="text/csv"
+    )
+
+    # ---------------------------------------------------------
+    # TABLE DISPLAY (UNCHANGED, WITH TOOLBAR)
+    # ---------------------------------------------------------
+    st.dataframe(
+        df_ship_show,
+        use_container_width=True,
+        height=500,
+        hide_index=True
+    )
+
+
+
+
