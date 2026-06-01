@@ -247,7 +247,7 @@ with st.form("search_form"):
         st.session_state.search_submitted = True
 
 # ================= Reference Matches & Events =================
-if st.session_state.search_submitted:
+if st.session_state.search_submitted or True:
     # Process user input
     upc_list = [u.strip().zfill(5) for u in upc_input.split() if u.strip()]
     lp_list = [l.strip() for l in lp_input.split() if l.strip()]
@@ -270,85 +270,102 @@ if st.session_state.search_submitted:
     selected_lps = st.multiselect("LP(s) from results", lps_from_ref, default=lps_from_ref)
     effective_lps = list(set((selected_lps or []) + lp_list))
 
-    # ----------------------------- Connected Events -----------------------------
-    events_match = pd.DataFrame()
-    if effective_lps and not events_db.empty:
+# ============================== EVENTS (EXCEL STYLE) ==============================
+
+st.markdown("---")
+st.header("📊 Events Explorer (Excel View)")
+
+# ✅ Build LP list
+manual_lp_list = [l.strip() for l in lp_input.split() if l.strip()]
+effective_lps = list(set((selected_lps or []) + manual_lp_list))
+
+# ✅ Decide dataset
+if not events_db.empty:
+    if effective_lps:
         events_match = get_events_for_lps(events_db, effective_lps)
-        if events_match.empty:
-            st.info("No events found for the selected LP(s).")
-            st.session_state.linked_event_tactics = []
-            st.session_state.linked_effective_lps = list(effective_lps)
-        else:
-            st.markdown("### Connected Events")
+    else:
+        events_match = events_db.copy()   # ✅ SHOW ALL EVENTS
 
-            # Curated vs full (optional)
-            show_full = st.checkbox("Show full table (all columns)", value=False, key="events_show_full")
-            df_display = events_match.copy() if show_full else safe_subset(events_match, EVENT_DISPLAY_COLS)
-            parse_event_dates_inplace(df_display)
+    if events_match.empty:
+        st.info("No events found.")
+        st.session_state["linked_event_tactics"] = []
+    else:
 
-            # --- Cascading filters: only show available values ---
-            cols_to_filter = [c for c in COMPACT_FILTER_COLS if c in df_display.columns]
-            filter_values = {}
-            df_work = df_display.copy()  # progressively filtered left -> right
+        # ✅ Choose columns
+        show_full = st.checkbox(
+            "Show full table (all columns)",
+            value=False,
+            key="events_show_full_excel"
+        )
 
-            if cols_to_filter:
-                filter_cols = st.columns(len(cols_to_filter))
-                for i, col_name in enumerate(cols_to_filter):
-                    with filter_cols[i]:
-                        if col_name in ["Tactic Performance Start Date", "Tactic Performance End Date"]:
-                            val = st.date_input(f"{col_name}", value=None, key=f"ev_f_{col_name}")
-                            filter_values[col_name] = val if val else None
-                            if val is not None:
-                                if not pd.api.types.is_datetime64_any_dtype(df_work[col_name]):
-                                    df_work[col_name] = pd.to_datetime(df_work[col_name], errors="coerce")
-                                cmp_ts = pd.to_datetime(val)
-                                if col_name == "Tactic Performance Start Date":
-                                    df_work = df_work[df_work[col_name] >= cmp_ts]
-                                else:
-                                    df_work = df_work[df_work[col_name] <= cmp_ts]
-                        else:
-                            options = (
-                                df_work[col_name]
-                                .dropna()
-                                .astype(str)
-                                .str.strip()
-                                .unique()
-                                .tolist()
-                            )
-                            options = sorted(options)
-                            sel = st.selectbox(
-                                f"{col_name}",
-                                [""] + options,  # "" = no filter
-                                index=0,
-                                key=f"ev_f_{col_name}"
-                            )
-                            filter_values[col_name] = sel.strip() if str(sel).strip() != "" else None
-                            if filter_values[col_name] is not None:
-                                df_work = df_work[df_work[col_name].astype(str).str.strip() == filter_values[col_name]]
+        df_display = events_match.copy() if show_full else safe_subset(events_match, EVENT_DISPLAY_COLS)
+        parse_event_dates_inplace(df_display)
 
-            # Final filtered events
-            df_filtered = df_work
+        # ================= EXCEL-LIKE FILTERS =================
+        st.markdown("### 🔎 Filter (Excel Style)")
 
-            # --- Link Events -> Shipments (tactics + lps) ---
-            selected_event_tactic = None
-            if "Tactic ID" in filter_values and filter_values["Tactic ID"]:
-                selected_event_tactic = str(filter_values["Tactic ID"]).strip()
-            event_tactics_current = []
-            if "Tactic ID" in df_filtered.columns:
-                event_tactics_current = (
-                    df_filtered["Tactic ID"].dropna().astype(str).str.strip().unique().tolist()
-                )
-            if selected_event_tactic:
-                st.session_state["linked_event_tactics"] = [selected_event_tactic]
-            else:
-                st.session_state["linked_event_tactics"] = sorted(event_tactics_current)
-            st.session_state["linked_effective_lps"] = list(effective_lps)
+        cols_to_filter = [c for c in COMPACT_FILTER_COLS if c in df_display.columns]
+        df_filtered = df_display.copy()
 
-            # Show + export events
-            df_events_show = drop_index_like_columns(df_filtered)
-            st.dataframe(df_events_show, use_container_width=True, height=500, hide_index=True)
-            path_ev = to_csv(df_events_show, "search_result_events.csv")
-            st.caption(f"Saved filtered events to: `{path_ev}`")
+        if cols_to_filter:
+            filter_cols = st.columns(min(len(cols_to_filter), 4))
+
+            for i, col in enumerate(cols_to_filter):
+                with filter_cols[i % 4]:
+
+                    options = (
+                        df_filtered[col]
+                        .dropna()
+                        .astype(str)
+                        .str.strip()
+                        .unique()
+                        .tolist()
+                    )
+                    options = sorted(options)
+
+                    selected_vals = st.multiselect(
+                        f"{col}",
+                        options=options,
+                        default=[],
+                        key=f"excel_filter_{col}"
+                    )
+
+                    if selected_vals:
+                        df_filtered = df_filtered[
+                            df_filtered[col].astype(str).str.strip().isin(selected_vals)
+                        ]
+
+        # ================= LINK TO SHIPMENTS =================
+        if "Tactic ID" in df_filtered.columns:
+            st.session_state["linked_event_tactics"] = (
+                df_filtered["Tactic ID"]
+                .dropna()
+                .astype(str)
+                .str.strip()
+                .unique()
+                .tolist()
+            )
+
+        st.session_state["linked_effective_lps"] = effective_lps
+
+        # ================= EXCEL STYLE TABLE =================
+        st.markdown("### 📋 Events Table")
+
+        df_events_show = drop_index_like_columns(df_filtered)
+
+        st.caption("Tip: Click column headers to sort. Scroll & select like Excel.")
+
+        edited_df = st.data_editor(
+            df_events_show,
+            use_container_width=True,
+            height=550,
+            hide_index=True,
+            key="events_excel_table"
+        )
+
+        # ✅ Save export
+        path_ev = to_csv(df_events_show, "events_output.csv")
+        st.caption(f"Saved to: `{path_ev}`")
 
 # --------------------------- Shipment Validation ---------------------------
 st.markdown("---")
@@ -363,38 +380,56 @@ else:
     effective_lps_linked = st.session_state.get("linked_effective_lps", [])
     event_tactics_linked = st.session_state.get("linked_event_tactics", [])
 
+   
+# ---------------------------------------------------------
+    # LP FILTER DROPDOWN (BASED ON SELECTED TACTIC)
     # ---------------------------------------------------------
-    # LP FILTER DROPDOWN (LIKE LP RESULT SELECTOR)
-    # ---------------------------------------------------------
+    lp_source_df = shipments_db.copy()
+
+    # Filter FIRST by tactic → controls available LP list
+    if not lp_source_df.empty:
+        if event_tactics_linked and SHIP_TACTIC_COL in lp_source_df.columns:
+            lp_source_df[SHIP_TACTIC_COL] = (
+                lp_source_df[SHIP_TACTIC_COL].astype(str).str.strip()
+            )
+            lp_source_df = lp_source_df[
+                lp_source_df[SHIP_TACTIC_COL].isin(event_tactics_linked)
+            ]
+        else:
+            lp_source_df = lp_source_df.iloc[0:0]
+
+    # Extract LPs from filtered data
     all_shipment_lps = (
-        coalesce_series(shipments_view, SHIP_LP_ALIASES)
+        coalesce_series(lp_source_df, SHIP_LP_ALIASES)
         .dropna()
         .astype(str)
         .str.strip()
         .unique()
         .tolist()
     )
+
     all_shipment_lps = sorted(all_shipment_lps)
 
+    if not all_shipment_lps:
+        st.warning("No LPs available for the selected Tactic ID(s).")
+
     lp_filter_options = ["ALL"] + all_shipment_lps
-    default_lp_selection = effective_lps_linked if effective_lps_linked else ["ALL"]
 
     selected_shipment_lps = st.multiselect(
-        "Filter Shipments by LP(s)",
+        "Filter Shipments by LP(s) (Optional)",
         options=lp_filter_options,
-        default=default_lp_selection
+        default=["ALL"]
     )
 
+
+    
     # ---------------------------------------------------------
-    # 1) FILTER BY LP(s)
+    # 1) FILTER BY LP(s) — OPTIONAL
     # ---------------------------------------------------------
     lp_coal = coalesce_series(shipments_view, SHIP_LP_ALIASES).astype(str).str.strip()
 
-    if selected_shipment_lps:
-        if "ALL" not in selected_shipment_lps:
-            shipments_view = shipments_view[lp_coal.isin(selected_shipment_lps)]
-    else:
-        shipments_view = shipments_view.iloc[0:0]
+    if selected_shipment_lps and "ALL" not in selected_shipment_lps:
+        shipments_view = shipments_view[lp_coal.isin(selected_shipment_lps)]
 
     # ---------------------------------------------------------
     # 2) FILTER BY CONNECTED EVENT TACTIC ID(s)
