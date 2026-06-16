@@ -37,8 +37,8 @@ SHIP_DATE_CANDIDATES = [
 
 # Event columns shown by default (falls back gracefully if missing)
 EVENT_DISPLAY_COLS = [
-    "Tactic ID", "Promo ID", "L6 Planning Account",
-    "Tactic Type", "L5 Promoted Product Group",
+    "Tactic ID", "Promo ID", "L6 Planning Account", 
+    "Tactic Type", "L5 Promoted Product Group Code",
     "Payment Type", "Promo Name", "Discount Type",
     "Tactic Performance Start Date", "Tactic Performance End Date",
     "Discount Rate", "Settled Spend $", "Planned Spend $", "Remaining Spend $",
@@ -46,7 +46,7 @@ EVENT_DISPLAY_COLS = [
 
 # Compact filters in events table (order matters for cascading)
 COMPACT_FILTER_COLS = [
-    "Tactic ID", "Promo ID", "L6 Planning Account",
+    "Tactic ID", "Promo ID","L6 Planning Account",
     "Tactic Type", "Payment Type",
     "Tactic Performance Start Date", "Tactic Performance End Date",
     "Discount Rate"
