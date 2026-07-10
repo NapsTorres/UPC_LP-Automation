@@ -185,10 +185,22 @@ def get_events_for_lps(events_view: pd.DataFrame, lps: list) -> pd.DataFrame:
         return pd.DataFrame()
     return events_view[events_view[EVENT_LP_COL].astype(str).isin(lps)].copy()
 
+# All event columns that contain dates
+EVENT_DATE_COLS = [
+    "Tactic Performance Start Date", "Tactic Performance End Date",
+    "Tactic Ship Start Date", "Tactic Ship End Date",
+    "Tactic Order Start Date", "Tactic Order End Date",
+    "Promotion Created Date",
+]
+
 def parse_event_dates_inplace(df: pd.DataFrame):
-    for col in ["Tactic Performance Start Date", "Tactic Performance End Date"]:
+    for col in EVENT_DATE_COLS:
         if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce")
+            df[col] = (
+                pd.to_datetime(df[col], errors="coerce")
+                .dt.strftime("%m/%d/%Y")
+                .where(pd.to_datetime(df[col], errors="coerce").notna(), other="")
+            )
 
 def detect_shipment_date_col(df: pd.DataFrame):
     for cand in SHIP_DATE_CANDIDATES:
@@ -370,6 +382,49 @@ if not events_db.empty:
             hide_index=True,
             key="events_excel_table"
         )
+
+        # ================= SPEND SUMMARY =================
+        SETTLED_COL  = "Settled Spend $"
+        PLANNED_COL  = "Planned Spend $"
+        REMAINING_COL = "Remaining Spend $"
+
+        has_settled   = SETTLED_COL  in df_events_show.columns
+        has_planned   = PLANNED_COL  in df_events_show.columns
+        has_remaining = REMAINING_COL in df_events_show.columns
+
+        if has_settled or has_planned:
+            st.markdown("#### 💰 Spend Summary")
+            m1, m2, m3 = st.columns(3)
+
+            def to_numeric_sum(df, col):
+                """Sum a currency column that may contain '$' and ',' characters."""
+                if col not in df.columns:
+                    return 0.0
+                cleaned = (
+                    df[col]
+                    .astype(str)
+                    .str.replace(r"[\$,]", "", regex=True)
+                    .str.strip()
+                )
+                return pd.to_numeric(cleaned, errors="coerce").sum()
+
+            total_settled   = to_numeric_sum(edited_df, SETTLED_COL)
+            total_planned   = to_numeric_sum(edited_df, PLANNED_COL)
+
+            # Always calculate: Total Planned − Total Settled
+            total_remaining = total_planned - total_settled
+
+            with m1:
+                st.metric("Total Settled Spend $",  f"${total_settled:,.2f}")
+            with m2:
+                st.metric("Total Planned Spend $",  f"${total_planned:,.2f}")
+            with m3:
+                st.metric(
+                    "Remaining (Plan − Settled)",
+                    f"${total_remaining:,.2f}",
+                    delta=f"${total_remaining:,.2f}",
+                    delta_color="normal" if total_remaining >= 0 else "inverse",
+                )
 
         # ✅ Save export
         path_ev = to_csv(df_events_show, "events_output.csv")
