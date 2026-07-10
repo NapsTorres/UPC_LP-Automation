@@ -123,6 +123,10 @@ def safe_subset(df: pd.DataFrame, cols: list) -> pd.DataFrame:
     use_cols = [c for c in cols if c in df.columns]
     return df[use_cols] if use_cols else df
 
+def dynamic_height(df: pd.DataFrame, row_px: int = 35, header_px: int = 38, min_px: int = 80, max_px: int = 600) -> int:
+    """Return a pixel height that fits exactly the rows in df, clamped between min and max."""
+    return max(min_px, min(header_px + len(df) * row_px, max_px))
+
 def reorder_columns(df: pd.DataFrame, preferred_order: list) -> pd.DataFrame:
     """Reorder df so preferred_order columns (if present) come first in that order; keep the rest after."""
     head = [c for c in preferred_order if c in df.columns]
@@ -262,7 +266,12 @@ if st.session_state.search_submitted or True:
     st.subheader("Reference Matches")
     if df_ref.empty:
         st.info("No reference matches found with the provided UPC/LP.")
-    st.dataframe(drop_index_like_columns(df_ref), use_container_width=True, hide_index=True)
+    st.dataframe(
+        drop_index_like_columns(df_ref),
+        use_container_width=True,
+        height=dynamic_height(df_ref),
+        hide_index=True,
+    )
 
     # LP selection from reference results
     lps_from_ref = df_ref[REF_LP_COL].dropna().astype(str).unique().tolist() if (not df_ref.empty and REF_LP_COL in df_ref.columns) else []
@@ -357,7 +366,7 @@ if not events_db.empty:
         edited_df = st.data_editor(
             df_events_show,
             use_container_width=True,
-            height=550,
+            height=dynamic_height(df_events_show),
             hide_index=True,
             key="events_excel_table"
         )
@@ -511,7 +520,7 @@ else:
     st.dataframe(
         df_ship_show,
         use_container_width=True,
-        height=500,
+        height=dynamic_height(df_ship_show),
         hide_index=True
     )
 
