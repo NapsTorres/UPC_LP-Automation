@@ -123,10 +123,6 @@ def safe_subset(df: pd.DataFrame, cols: list) -> pd.DataFrame:
     use_cols = [c for c in cols if c in df.columns]
     return df[use_cols] if use_cols else df
 
-def dynamic_height(df: pd.DataFrame, row_px: int = 35, header_px: int = 38, min_px: int = 80, max_px: int = 600) -> int:
-    """Return a pixel height that fits exactly the rows in df, clamped between min and max."""
-    return max(min_px, min(header_px + len(df) * row_px, max_px))
-
 def reorder_columns(df: pd.DataFrame, preferred_order: list) -> pd.DataFrame:
     """Reorder df so preferred_order columns (if present) come first in that order; keep the rest after."""
     head = [c for c in preferred_order if c in df.columns]
@@ -185,22 +181,10 @@ def get_events_for_lps(events_view: pd.DataFrame, lps: list) -> pd.DataFrame:
         return pd.DataFrame()
     return events_view[events_view[EVENT_LP_COL].astype(str).isin(lps)].copy()
 
-# All event columns that contain dates
-EVENT_DATE_COLS = [
-    "Tactic Performance Start Date", "Tactic Performance End Date",
-    "Tactic Ship Start Date", "Tactic Ship End Date",
-    "Tactic Order Start Date", "Tactic Order End Date",
-    "Promotion Created Date",
-]
-
 def parse_event_dates_inplace(df: pd.DataFrame):
-    for col in EVENT_DATE_COLS:
+    for col in ["Tactic Performance Start Date", "Tactic Performance End Date"]:
         if col in df.columns:
-            df[col] = (
-                pd.to_datetime(df[col], errors="coerce")
-                .dt.strftime("%m/%d/%Y")
-                .where(pd.to_datetime(df[col], errors="coerce").notna(), other="")
-            )
+            df[col] = pd.to_datetime(df[col], errors="coerce").dt.strftime("%m/%d/%Y")
 
 def detect_shipment_date_col(df: pd.DataFrame):
     for cand in SHIP_DATE_CANDIDATES:
@@ -278,12 +262,7 @@ if st.session_state.search_submitted or True:
     st.subheader("Reference Matches")
     if df_ref.empty:
         st.info("No reference matches found with the provided UPC/LP.")
-    st.dataframe(
-        drop_index_like_columns(df_ref),
-        use_container_width=True,
-        height=dynamic_height(df_ref),
-        hide_index=True,
-    )
+    st.dataframe(drop_index_like_columns(df_ref), use_container_width=True, hide_index=True)
 
     # LP selection from reference results
     lps_from_ref = df_ref[REF_LP_COL].dropna().astype(str).unique().tolist() if (not df_ref.empty and REF_LP_COL in df_ref.columns) else []
@@ -318,7 +297,16 @@ if not events_db.empty:
             key="events_show_full_excel"
         )
 
-        df_display = events_match.copy() if show_full else safe_subset(events_match, EVENT_DISPLAY_COLS)
+        # Compute Remaining Spend $ = Planned Spend $ - Settled Spend $ BEFORE subsetting
+        # so the derived column is present when safe_subset selects EVENT_DISPLAY_COLS
+        events_work = events_match.copy()
+        if "Planned Spend $" in events_work.columns and "Settled Spend $" in events_work.columns:
+            events_work["Remaining Spend $"] = (
+                pd.to_numeric(events_work["Planned Spend $"], errors="coerce").fillna(0)
+                - pd.to_numeric(events_work["Settled Spend $"], errors="coerce").fillna(0)
+            )
+
+        df_display = events_work if show_full else safe_subset(events_work, EVENT_DISPLAY_COLS)
         parse_event_dates_inplace(df_display)
 
         # ================= EXCEL-LIKE FILTERS =================
@@ -356,15 +344,30 @@ if not events_db.empty:
                         ]
 
         # ================= LINK TO SHIPMENTS =================
-        if "Tactic ID" in df_filtered.columns:
+        # Always update linked tactic IDs from the currently filtered events view.
+        # This ensures that any active event filter (especially Tactic ID) cascades
+        # down to the Shipment Validation section automatically.
+        tactic_col_in_display = "Tactic ID" if "Tactic ID" in df_filtered.columns else None
+        if tactic_col_in_display:
             st.session_state["linked_event_tactics"] = (
-                df_filtered["Tactic ID"]
+                df_filtered[tactic_col_in_display]
                 .dropna()
                 .astype(str)
                 .str.strip()
                 .unique()
                 .tolist()
             )
+        else:
+            # Tactic ID not in display — fall back to the full events match
+            if "Tactic ID" in events_match.columns:
+                st.session_state["linked_event_tactics"] = (
+                    events_match["Tactic ID"]
+                    .dropna()
+                    .astype(str)
+                    .str.strip()
+                    .unique()
+                    .tolist()
+                )
 
         st.session_state["linked_effective_lps"] = effective_lps
 
@@ -375,60 +378,34 @@ if not events_db.empty:
 
         st.caption("Tip: Click column headers to sort. Scroll & select like Excel.")
 
+        _ROW_PX = 35          # approximate pixels per data row
+        _HEADER_PX = 38       # header row height
+        _MIN_H = 150          # floor so the table is never tiny
+        _MAX_H = 700          # cap so it doesn't swallow the page
+        _events_height = max(_MIN_H, min(_MAX_H, _HEADER_PX + len(df_events_show) * _ROW_PX))
+
         edited_df = st.data_editor(
             df_events_show,
             use_container_width=True,
-            height=dynamic_height(df_events_show),
+            height=_events_height,
             hide_index=True,
             key="events_excel_table"
         )
 
-        # ================= SPEND SUMMARY =================
-        SETTLED_COL  = "Settled Spend $"
-        PLANNED_COL  = "Planned Spend $"
-        REMAINING_COL = "Remaining Spend $"
-
-        has_settled   = SETTLED_COL  in df_events_show.columns
-        has_planned   = PLANNED_COL  in df_events_show.columns
-        has_remaining = REMAINING_COL in df_events_show.columns
-
-        if has_settled or has_planned:
-            st.markdown("#### 💰 Spend Summary")
-            m1, m2, m3 = st.columns(3)
-
-            def to_numeric_sum(df, col):
-                """Sum a currency column that may contain '$' and ',' characters."""
-                if col not in df.columns:
-                    return 0.0
-                cleaned = (
-                    df[col]
-                    .astype(str)
-                    .str.replace(r"[\$,]", "", regex=True)
-                    .str.strip()
-                )
-                return pd.to_numeric(cleaned, errors="coerce").sum()
-
-            total_settled   = to_numeric_sum(edited_df, SETTLED_COL)
-            total_planned   = to_numeric_sum(edited_df, PLANNED_COL)
-
-            # Always calculate: Total Planned − Total Settled
-            total_remaining = total_planned - total_settled
-
-            with m1:
-                st.metric("Total Settled Spend $",  f"${total_settled:,.2f}")
-            with m2:
-                st.metric("Total Planned Spend $",  f"${total_planned:,.2f}")
-            with m3:
-                st.metric(
-                    "Remaining (Plan − Settled)",
-                    f"${total_remaining:,.2f}",
-                    delta=f"${total_remaining:,.2f}",
-                    delta_color="normal" if total_remaining >= 0 else "inverse",
-                )
-
         # ✅ Save export
         path_ev = to_csv(df_events_show, "events_output.csv")
         st.caption(f"Saved to: `{path_ev}`")
+
+        # ================= SPEND SUMMARY (updates with filter) =================
+        settled_total   = pd.to_numeric(df_filtered.get("Settled Spend $"),  errors="coerce").sum() if "Settled Spend $"  in df_filtered.columns else 0
+        planned_total   = pd.to_numeric(df_filtered.get("Planned Spend $"),  errors="coerce").sum() if "Planned Spend $"  in df_filtered.columns else 0
+        remaining_total = planned_total - settled_total
+
+        st.markdown("### 💰 Spend Summary")
+        _m1, _m2, _m3 = st.columns(3)
+        _m1.metric("Planned Spend $",   f"${planned_total:,.2f}")
+        _m2.metric("Settled Spend $",   f"${settled_total:,.2f}")
+        _m3.metric("Remaining Spend $", f"${remaining_total:,.2f}")
 
 # --------------------------- Shipment Validation ---------------------------
 st.markdown("---")
@@ -439,12 +416,22 @@ if shipments_db.empty:
 else:
     shipments_view = shipments_db.copy()
 
-    # Pull LP(s) + connected event Tactic IDs from session
+    # Pull LP(s) + connected event Tactic IDs from session.
+    # These are set in the Events Explorer section above — whenever you
+    # filter events (e.g. by Tactic ID), the shipments below automatically
+    # follow those same Tactic ID(s).
     effective_lps_linked = st.session_state.get("linked_effective_lps", [])
     event_tactics_linked = st.session_state.get("linked_event_tactics", [])
 
-   
-# ---------------------------------------------------------
+    if event_tactics_linked:
+        st.caption(
+            f"🔗 Shipments linked to **{len(event_tactics_linked)}** "
+            f"Tactic ID(s) from the Events filter above: "
+            + ", ".join(str(t) for t in sorted(event_tactics_linked)[:10])
+            + (" …" if len(event_tactics_linked) > 10 else "")
+        )
+
+    # ---------------------------------------------------------
     # LP FILTER DROPDOWN (BASED ON SELECTED TACTIC)
     # ---------------------------------------------------------
     lp_source_df = shipments_db.copy()
@@ -572,10 +559,16 @@ else:
     # ---------------------------------------------------------
     # TABLE DISPLAY (UNCHANGED, WITH TOOLBAR)
     # ---------------------------------------------------------
+    _ROW_PX = 35
+    _HEADER_PX = 38
+    _MIN_H = 150
+    _MAX_H = 700
+    _ship_height = max(_MIN_H, min(_MAX_H, _HEADER_PX + len(df_ship_show) * _ROW_PX))
+
     st.dataframe(
         df_ship_show,
         use_container_width=True,
-        height=dynamic_height(df_ship_show),
+        height=_ship_height,
         hide_index=True
     )
 
