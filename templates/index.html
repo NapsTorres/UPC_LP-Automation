@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UPC / LP Search Portal</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif; font-size: 14px; background: #f4f6f9; color: #1f2328; }
+  header { background: #1f2328; color: #fff; padding: 14px 24px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 18px; font-weight: 600; }
+  .page { max-width: 1400px; margin: 0 auto; padding: 20px 24px; }
+  section { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+  section h2 { font-size: 15px; font-weight: 600; margin-bottom: 14px; padding-bottom: 8px; border-bottom: 1px solid #e5e7eb; }
+  section h3 { font-size: 13px; font-weight: 600; margin: 14px 0 8px; color: #57606a; text-transform: uppercase; letter-spacing: .04em; }
+  label { display: block; font-size: 12px; font-weight: 500; color: #57606a; margin-bottom: 4px; }
+  input[type=text], select { width: 100%; padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; outline: none; }
+  input[type=text]:focus, select:focus { border-color: #3b82d4; box-shadow: 0 0 0 2px rgba(59,130,212,.15); }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .grid-auto { display: flex; flex-wrap: wrap; gap: 8px; }
+  button, .btn { cursor: pointer; border: none; border-radius: 6px; padding: 8px 18px; font-size: 13px; font-weight: 500; transition: opacity .15s; }
+  button:hover, .btn:hover { opacity: .85; }
+  .btn-primary { background: #3b82d4; color: #fff; }
+  .btn-secondary { background: #e5e7eb; color: #1f2328; }
+  .btn-success  { background: #16a34a; color: #fff; }
+  .btn-sm { padding: 5px 12px; font-size: 12px; }
+  .spinner { display: none; width: 16px; height: 16px; border: 2px solid #d1d5db; border-top-color: #3b82d4; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; margin-left: 8px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .info-box { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 10px 14px; font-size: 13px; color: #1e40af; margin-bottom: 12px; }
+  .warn-box { background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 10px 14px; font-size: 13px; color: #92400e; margin-bottom: 12px; }
+  /* metrics */
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 14px; }
+  .metric { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 18px; }
+  .metric .label { font-size: 11px; color: #57606a; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+  .metric .value { font-size: 22px; font-weight: 700; color: #1f2328; }
+  /* tables */
+  .table-wrap { overflow-x: auto; overflow-y: auto; height: 320px; border: 1px solid #e5e7eb; border-radius: 6px; margin-top: 10px; }
+  .pager { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .pager-btn { padding: 4px 12px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; cursor: pointer; color: #1f2328; }
+  .pager-btn:hover:not(:disabled) { background: #f3f4f6; }
+  .pager-btn:disabled { opacity: .4; cursor: default; }
+  .pager-info { font-size: 12px; color: #57606a; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  thead th { position: sticky; top: 0; background: #f7f8fa; border-bottom: 2px solid #e5e7eb; padding: 5px 6px 5px 10px; text-align: left; white-space: nowrap; user-select: none; }
+  thead th:hover { background: #eef0f3; }
+  thead th .th-label { cursor: pointer; }
+  thead th.sorted-asc  .th-label::after { content: " ▲"; font-size: 10px; color: #3b82d4; }
+  thead th.sorted-desc .th-label::after { content: " ▼"; font-size: 10px; color: #3b82d4; }
+  thead th .th-arrow { margin-left: 4px; font-size: 11px; color: #9ca3af; cursor: pointer; padding: 0 2px; border-radius: 2px; }
+  thead th .th-arrow:hover { color: #3b82d4; background: #e0f2fe; }
+  thead th.col-filtered { background: #eff6ff; }
+  thead th.col-filtered .th-arrow { color: #3b82d4; }
+  /* Excel-style filter panel — sort section */
+  .cf-sort-row { display: flex; align-items: center; gap: 7px; padding: 6px 12px; font-size: 12px; cursor: pointer; border-radius: 0; user-select: none; }
+  .cf-sort-row:hover { background: #f3f4f6; }
+  .cf-sort-row.cf-sort-active { background: #eff6ff; color: #1e40af; font-weight: 600; }
+  .cf-sort-icon { font-size: 13px; width: 16px; text-align: center; flex-shrink: 0; }
+  .cf-sort-divider { border: none; border-top: 1px solid #e5e7eb; margin: 4px 0; }
+  tbody tr:nth-child(even) { background: #fafafa; }
+  tbody tr:hover { background: #eff6ff; }
+  tbody td { padding: 6px 10px; border-bottom: 1px solid #f0f0f0; white-space: nowrap; }
+  .empty-msg { text-align: center; padding: 30px; color: #57606a; font-size: 13px; }
+  /* active filter badge above table */
+  .filter-badge { display: inline-flex; align-items: center; gap: 8px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 4px 10px; font-size: 12px; color: #1e40af; margin-bottom: 6px; }
+  .filter-badge-clear { background: none; border: none; color: #1e40af; cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; }
+  /* column filter dropdown panel */
+  .col-filter-panel { position: absolute; z-index: 9999; background: #fff; border: 1px solid #d1d5db; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.12); min-width: 220px; max-width: 300px; padding: 0; overflow: hidden; }
+  .cf-search-wrap { padding: 8px; border-bottom: 1px solid #f0f0f0; }
+  .cf-search { width: 100%; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px; outline: none; }
+  .cf-actions { display: flex; gap: 6px; padding: 4px 8px; border-bottom: 1px solid #f0f0f0; }
+  .cf-btn { background: none; border: 1px solid #d1d5db; border-radius: 4px; padding: 2px 8px; font-size: 11px; cursor: pointer; color: #374151; }
+  .cf-btn:hover { background: #f3f4f6; }
+  .cf-list { max-height: 160px; overflow-y: auto; padding: 4px 0; }
+  .cf-item { display: flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; }
+  .cf-item:hover { background: #f9fafb; }
+  .cf-item input { margin: 0; flex-shrink: 0; }
+  .cf-item-checked { background: #eff6ff !important; font-weight: 500; color: #1e40af; }
+  .cf-item-checked:hover { background: #dbeafe !important; }
+  .cf-checked-divider { border: none; border-top: 1px dashed #bfdbfe; margin: 2px 8px; }
+  .cf-footer { display: flex; gap: 6px; padding: 8px; border-top: 1px solid #f0f0f0; justify-content: flex-end; }
+  .cf-apply  { background: #3b82d4; color: #fff; border: none; border-radius: 4px; padding: 5px 14px; font-size: 12px; cursor: pointer; font-weight: 500; }
+  .cf-apply:hover { opacity: .88; }
+  .cf-cancel { background: #e5e7eb; color: #374151; border: none; border-radius: 4px; padding: 5px 10px; font-size: 12px; cursor: pointer; }
+  .cf-cancel:hover { background: #d1d5db; }
+  /* tag pills */
+  .tag { display: inline-block; background: #e0e7ff; color: #3730a3; border-radius: 4px; padding: 2px 8px; font-size: 11px; margin: 2px; }
+  /* download strip */
+  .dl-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  /* file selector */
+  .file-select { display: flex; flex-wrap: wrap; gap: 6px; }
+  .file-chip { display: inline-flex; align-items: center; gap: 4px; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 20px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
+  .file-chip input { margin: 0; width: 14px; height: 14px; cursor: pointer; }
+  /* filter row — multiselect widgets */
+  .filter-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .ms-widget { position: relative; }
+  .ms-label { font-size: 11px; font-weight: 600; color: #57606a; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .04em; }
+  .ms-box { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 34px; padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; cursor: text; }
+  .ms-box:focus-within { border-color: #3b82d4; box-shadow: 0 0 0 2px rgba(59,130,212,.15); }
+  .ms-tag { display: inline-flex; align-items: center; gap: 3px; background: #dbeafe; color: #1e40af; border-radius: 4px; padding: 2px 6px; font-size: 11px; white-space: nowrap; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+  .ms-tag-x { background: none; border: none; color: #3b82d4; cursor: pointer; font-size: 13px; line-height: 1; padding: 0 1px; }
+  .ms-tag-x:hover { color: #1e3a8a; }
+  .ms-input { border: none; outline: none; font-size: 12px; min-width: 80px; flex: 1; padding: 0; background: transparent; }
+  .ms-dropdown { position: absolute; z-index: 1000; top: calc(100% + 2px); left: 0; right: 0; background: #fff; border: 1px solid #d1d5db; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,.1); overflow: hidden; }
+  .ms-drop-list { max-height: 150px; overflow-y: auto; padding: 4px 0; }
+  .ms-opt { padding: 6px 12px; font-size: 12px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: none; }
+  .ms-opt:hover { background: #f3f4f6; }
+  .ms-opt-on { background: #dbeafe; color: #1e40af; font-weight: 500; }
+  .ms-opt-on:hover { background: #bfdbfe; }
+  .ms-no-match { padding: 8px 12px; font-size: 12px; color: #9ca3af; }
+  hr.divider { border: none; border-top: 1px solid #e5e7eb; margin: 20px 0; }
+  /* drop zone */
+  .drop-zone { border: 2px dashed #d1d5db; border-radius: 8px; padding: 14px 10px; text-align: center; color: #57606a; font-size: 12px; cursor: pointer; transition: background .15s, border-color .15s; margin-top: 8px; }
+  .drop-zone.drag-over { background: #eff6ff; border-color: #3b82d4; color: #1e40af; }
+  .drop-zone input[type=file] { display: none; }
+  /* file chip with delete */
+  .file-chip-del { display: inline-flex; align-items: center; gap: 4px; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 20px; padding: 3px 6px 3px 10px; font-size: 12px; margin: 2px; }
+  .file-chip-del .del-btn { background: #fee2e2; border: none; border-radius: 50%; width: 16px; height: 16px; font-size: 10px; cursor: pointer; color: #dc2626; line-height: 16px; text-align: center; padding: 0; flex-shrink: 0; }
+  .file-chip-del .del-btn:hover { background: #fca5a5; }
+  .uploading-msg { font-size: 12px; color: #3b82d4; margin-top: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+  <h1>UPC / LP Search Portal</h1>
+</header>
+<div class="page">
+
+  <!-- ══ FILE SELECTION ══ -->
+  <section>
+    <h2>📂 Data Files</h2>
+    <div class="grid-3">
+      <div>
+        <label>Reference files</label>
+        <div id="ref-chips">
+          {% for f in ref_files %}
+          <span class="file-chip-del"><input type="checkbox" name="ref" value="{{f}}" checked style="width:14px;height:14px;margin:0"> {{f}} <button class="del-btn" onclick="deleteFile('ref','{{f}}')" title="Delete">✕</button></span>
+          {% endfor %}
+        </div>
+        <div class="drop-zone" id="dz-ref" onclick="document.getElementById('fu-ref').click()" ondragover="dzOver(event,'dz-ref')" ondragleave="dzLeave('dz-ref')" ondrop="dzDrop(event,'ref')">
+          <input type="file" id="fu-ref" accept=".xlsx,.xls,.csv" multiple onchange="uploadFile(this,'ref')">
+          ＋ Drop or click to add files
+        </div>
+        <div class="uploading-msg" id="ul-ref" style="display:none">⏳ Uploading & reloading…</div>
+      </div>
+      <div>
+        <label>Events files</label>
+        <div id="events-chips">
+          {% for f in events_files %}
+          <span class="file-chip-del"><input type="checkbox" name="events" value="{{f}}" checked style="width:14px;height:14px;margin:0"> {{f}} <button class="del-btn" onclick="deleteFile('events','{{f}}')" title="Delete">✕</button></span>
+          {% endfor %}
+        </div>
+        <div class="drop-zone" id="dz-events" onclick="document.getElementById('fu-events').click()" ondragover="dzOver(event,'dz-events')" ondragleave="dzLeave('dz-events')" ondrop="dzDrop(event,'events')">
+          <input type="file" id="fu-events" accept=".xlsx,.xls,.csv" multiple onchange="uploadFile(this,'events')">
+          ＋ Drop or click to add files
+        </div>
+        <div class="uploading-msg" id="ul-events" style="display:none">⏳ Uploading & reloading…</div>
+      </div>
+      <div>
+        <label>Shipment files</label>
+        <div id="ship-chips">
+          {% for f in ship_files %}
+          <span class="file-chip-del"><input type="checkbox" name="ship" value="{{f}}" checked style="width:14px;height:14px;margin:0"> {{f}} <button class="del-btn" onclick="deleteFile('shipments','{{f}}')" title="Delete">✕</button></span>
+          {% endfor %}
+        </div>
+        <div class="drop-zone" id="dz-ship" onclick="document.getElementById('fu-ship').click()" ondragover="dzOver(event,'dz-ship')" ondragleave="dzLeave('dz-ship')" ondrop="dzDrop(event,'shipments')">
+          <input type="file" id="fu-ship" accept=".xlsx,.xls,.csv" multiple onchange="uploadFile(this,'shipments')">
+          ＋ Drop or click to add files
+        </div>
+        <div class="uploading-msg" id="ul-ship" style="display:none">⏳ Uploading & reloading…</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ SEARCH ══ -->
+  <section>
+    <h2>🔎 Search</h2>
+    <div class="grid-2">
+      <div>
+        <label>UPC(s) — paste a column, comma or space separated</label>
+        <input type="text" id="upc-input" placeholder="e.g. 12345 67890">
+      </div>
+      <div>
+        <label>LP(s) — paste a column, comma or space separated</label>
+        <input type="text" id="lp-input" placeholder="e.g. ABC DEF">
+      </div>
+    </div>
+    <div style="margin-top:12px">
+      <button class="btn-primary" onclick="runSearch()">Search <span class="spinner" id="search-spin"></span></button>
+    </div>
+  </section>
+
+  <!-- ══ REFERENCE MATCHES ══ -->
+  <section id="sec-ref">
+    <h2>📋 Reference Matches</h2>
+    <div id="ref-table-wrap"><div class="empty-msg">Enter a UPC or LP above and click Search.</div></div>
+    <div style="margin-top:10px;display:none" id="lp-filter-row">
+      <label>Filter LP(s) from results</label>
+      <div class="file-select" id="lp-chips"></div>
+    </div>
+  </section>
+
+  <!-- ══ EVENTS ══ -->
+  <section id="sec-events">
+    <h2>📊 Events Explorer</h2>
+    <h3>📋 Events Table</h3>
+    <div style="margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <button class="btn-secondary btn-sm" id="ev-col-toggle-btn" onclick="toggleEvColPanel()">Columns ▾</button>
+      <button class="btn-secondary btn-sm" id="ev-sort-btn" onclick="toggleEvSort()" title="Toggle date sort order">📅 Newest first ↓</button>
+      <div id="ev-col-panel" style="display:none;position:absolute;z-index:500;background:#fff;border:1px solid #d1d5db;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.1);padding:10px 14px;min-width:200px;max-height:260px;overflow-y:auto"></div>
+    </div>
+    <div id="ev-lp-breakdown" style="display:none;margin-bottom:10px;padding:10px 14px;background:#f7f8fa;border:1px solid #e5e7eb;border-radius:6px"></div>
+    <div id="events-table-wrap"></div>
+    <div class="metrics" id="spend-metrics">
+      <div class="metric"><div class="label">Planned Spend $</div><div class="value" id="m-planned">—</div></div>
+      <div class="metric"><div class="label">Settled Spend $</div><div class="value" id="m-settled">—</div></div>
+      <div class="metric"><div class="label">Remaining Spend $</div><div class="value" id="m-remaining">—</div></div>
+    </div>
+  </section>
+
+  <!-- ══ SHIPMENTS ══ -->
+  <section id="sec-ship">
+    <h2>🚚 Shipment Validation</h2>
+    <h3>🔍 Search Shipments Directly</h3>
+    <div class="grid-3">
+      <div>
+        <label>Tactic ID(s)</label>
+        <input type="text" id="ship-tactic" placeholder="e.g. 12345 67890">
+      </div>
+      <div>
+        <label>LP Code(s)</label>
+        <input type="text" id="ship-lp" placeholder="e.g. ABC DEF">
+      </div>
+      <div>
+        <label>Item Number(s)</label>
+        <input type="text" id="ship-item" placeholder="e.g. 001234">
+      </div>
+    </div>
+    <div style="margin-top:12px">
+      <button class="btn-primary" onclick="runShipmentSearch()">Search Shipments <span class="spinner" id="ship-spin"></span></button>
+    </div>
+    <div id="ship-link-info" style="margin-top:10px"></div>
+    <h3>⬇️ Download</h3>
+    <div class="dl-strip" id="ship-downloads"></div>
+    <div id="ship-lp-breakdown" style="display:none;margin-top:10px;padding:10px 14px;background:#f7f8fa;border:1px solid #e5e7eb;border-radius:6px"></div>
+    <h3>📋 Shipments Table</h3>
+    <div id="ship-table-wrap"></div>
+  </section>
+
+</div>
+<script src="/static/app.js?v={{ asset_ver }}"></script>
+</body>
+</html>

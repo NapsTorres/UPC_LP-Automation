@@ -1,4 +1,6 @@
-*.xlsx
-*.xlsx
+﻿*.xlsx
 *.csv
-*.xlsx
+# Box / Streamlit credentials
+.streamlit/secrets.toml
+app_settings.json
+
