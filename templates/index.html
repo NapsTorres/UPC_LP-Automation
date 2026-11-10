@@ -79,6 +79,8 @@
   .cf-item-checked { background: #eff6ff !important; font-weight: 500; color: #1e40af; }
   .cf-item-checked:hover { background: #dbeafe !important; }
   .cf-checked-divider { border: none; border-top: 1px dashed #bfdbfe; margin: 2px 8px; }
+  .cf-add-toggle { display: flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 12px; color: #374151; border-bottom: 1px solid #f0f0f0; cursor: pointer; background: #fafafa; }
+  .cf-add-toggle input { margin: 0; flex-shrink: 0; cursor: pointer; }
   .cf-footer { display: flex; gap: 6px; padding: 8px; border-top: 1px solid #f0f0f0; justify-content: flex-end; }
   .cf-apply  { background: #3b82d4; color: #fff; border: none; border-radius: 4px; padding: 5px 14px; font-size: 12px; cursor: pointer; font-weight: 500; }
   .cf-apply:hover { opacity: .88; }
@@ -110,6 +112,30 @@
   .ms-opt-on:hover { background: #bfdbfe; }
   .ms-no-match { padding: 8px 12px; font-size: 12px; color: #9ca3af; }
   hr.divider { border: none; border-top: 1px solid #e5e7eb; margin: 20px 0; }
+  /* row-number column */
+  th.col-rownum, td.col-rownum { width: 42px; min-width: 42px; max-width: 42px; background: #f7f8fa; border-right: 1px solid #e5e7eb; }
+  /* Excel-style column letter row */
+  th.col-letter { background: #eef0f3; color: #6b7280; font-size: 11px; font-weight: 700; text-align: center; letter-spacing: .04em; border-bottom: 1px solid #d1d5db; padding: 3px 4px; user-select: none; }
+  /* shipments total bar */
+  #ship-total-bar { background: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; padding: 6px 10px; margin-bottom: 8px; font-size: 12px; }
+  /* single-tactic one-liner */
+  .stot-oneliner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .stot-tactic { font-size: 11px; font-weight: 700; color: #166534; background: #dcfce7; border: 1px solid #86efac; border-radius: 4px; padding: 1px 8px; white-space: nowrap; }
+  .stot-cell { display: flex; align-items: baseline; gap: 4px; }
+  .stot-lbl { font-size: 10px; font-weight: 600; color: #57606a; text-transform: uppercase; letter-spacing: .04em; }
+  .stot-val { font-size: 14px; font-weight: 700; color: #166534; }
+  /* multi-tactic compact table */
+  .stot-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .stot-table thead th { background: #dcfce7; color: #166534; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 4px 8px; text-align: left; border-bottom: 1px solid #86efac; white-space: nowrap; }
+  .stot-table tbody tr:nth-child(even) { background: #f7fef9; }
+  .stot-table tbody td { padding: 3px 8px; border-bottom: 1px solid #d1fae5; vertical-align: middle; }
+  .stot-tactic-cell { font-size: 11px; font-weight: 700; color: #166534; white-space: nowrap; }
+  .stot-num { text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .stot-foot td { background: #bbf7d0; font-weight: 700; border-top: 2px solid #86efac; padding: 4px 8px; }
+  .stot-grand { font-size: 12px; color: #14532d; }
+  /* source file pills (shared) */
+  .total-src-wrap { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; }
+  .total-src-pill { background: #e0f2fe; border: 1px solid #7dd3fc; border-radius: 3px; padding: 1px 6px; font-size: 10px; color: #0369a1; white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
   /* drop zone */
   .drop-zone { border: 2px dashed #d1d5db; border-radius: 8px; padding: 14px 10px; text-align: center; color: #57606a; font-size: 12px; cursor: pointer; transition: background .15s, border-color .15s; margin-top: 8px; }
   .drop-zone.drag-over { background: #eff6ff; border-color: #3b82d4; color: #1e40af; }
@@ -244,8 +270,13 @@
     <div id="ship-link-info" style="margin-top:10px"></div>
     <h3>⬇️ Download</h3>
     <div class="dl-strip" id="ship-downloads"></div>
+    <div id="ship-source-filter" style="display:none;margin-top:10px;padding:10px 14px;background:#f7f8fa;border:1px solid #e5e7eb;border-radius:6px">
+      <div style="font-size:12px;font-weight:600;color:#57606a;margin-bottom:6px">📁 Filter by source file</div>
+      <div id="ship-source-chips" class="file-select"></div>
+    </div>
     <div id="ship-lp-breakdown" style="display:none;margin-top:10px;padding:10px 14px;background:#f7f8fa;border:1px solid #e5e7eb;border-radius:6px"></div>
     <h3>📋 Shipments Table</h3>
+    <div id="ship-total-bar" style="display:none"></div>
     <div id="ship-table-wrap"></div>
   </section>
 

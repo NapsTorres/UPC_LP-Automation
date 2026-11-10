@@ -322,7 +322,7 @@ if not events_db.empty:
                 with filter_cols[i % 4]:
 
                     options = (
-                        df_filtered[col]
+                        df_display[col]
                         .dropna()
                         .astype(str)
                         .str.strip()
@@ -334,11 +334,12 @@ if not events_db.empty:
                     selected_vals = st.multiselect(
                         f"{col}",
                         options=options,
-                        default=[],
+                        default=options,
                         key=f"excel_filter_{col}"
                     )
 
-                    if selected_vals:
+                    # Only filter when the user has deselected at least one option
+                    if selected_vals and set(selected_vals) != set(options):
                         df_filtered = df_filtered[
                             df_filtered[col].astype(str).str.strip().isin(selected_vals)
                         ]

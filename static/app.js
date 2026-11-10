@@ -84,6 +84,18 @@ function _filteredRows(tableId) {
   );
 }
 
+// Convert 0-based index to Excel-style column letter(s): 0→A, 25→Z, 26→AA …
+function _colLetter(i) {
+  let s = "";
+  i++;  // 1-based
+  while (i > 0) {
+    i--;
+    s = String.fromCharCode(65 + (i % 26)) + s;
+    i = Math.floor(i / 26);
+  }
+  return s;
+}
+
 function _renderTable(containerId, tableId) {
   const wrap  = document.getElementById(containerId);
   const state = _tableState[tableId];
@@ -95,8 +107,12 @@ function _renderTable(containerId, tableId) {
   const st        = _sortState[tableId];
   const filters   = _filterState[tableId] || {};
 
-  // ── Build header ──
-  const thead = cols.map((c, i) => {
+  // ── Build header — two rows: letter row + column-name row ──
+  const cornerTh  = `<th class="col-rownum col-letter" rowspan="2" style="width:42px;min-width:42px;text-align:center">#</th>`;
+  const letterRow = cols.map((_, i) =>
+    `<th class="col-letter" style="text-align:center;width:80px">${_colLetter(i)}</th>`
+  ).join("");
+  const nameRow = cols.map((c, i) => {
     const sortCls   = st.col === i ? (st.dir === 1 ? "sorted-asc" : "sorted-desc") : "";
     const activeCls = (filters[c] && filters[c].size > 0) ? " col-filtered" : "";
     return `<th class="${sortCls}${activeCls}" data-col="${i}" data-colname="${escHtml(c)}">` +
@@ -119,14 +135,17 @@ function _renderTable(containerId, tableId) {
     ${badge}
     <div class="table-wrap" id="vs-scroll-${tableId}">
       <table id="${tableId}">
-        <thead><tr>${thead}</tr></thead>
+        <thead>
+          <tr>${cornerTh}${letterRow}</tr>
+          <tr>${nameRow}</tr>
+        </thead>
         <tbody id="vs-body-${tableId}"></tbody>
       </table>
     </div>
     ${rowCount}`;
 
-  // ── Wire header interactions ──
-  wrap.querySelectorAll("thead th").forEach(th => {
+  // ── Wire header interactions (skip the # row-number th which has no data-col) ──
+  wrap.querySelectorAll("thead th[data-col]").forEach(th => {
     const colIdx  = parseInt(th.dataset.col);
     const colName = th.dataset.colname;
     th.querySelector(".th-label").addEventListener("click", () => {
@@ -150,12 +169,14 @@ function _renderTable(containerId, tableId) {
     const topPad    = startIdx * ROW_H;
     const botPad    = Math.max(0, (total - endIdx) * ROW_H);
 
-    let html = `<tr style="height:${topPad}px"><td colspan="${cols.length}" style="padding:0;border:none"></td></tr>`;
+    const spanAll = cols.length + 1;  // +1 for row-number column
+    let html = `<tr style="height:${topPad}px"><td colspan="${spanAll}" style="padding:0;border:none"></td></tr>`;
     for (let i = startIdx; i < endIdx; i++) {
       const row = rows[i];
-      html += "<tr>" + cols.map(c => `<td>${escHtml(row[c] ?? "")}</td>`).join("") + "</tr>";
+      html += `<tr><td class="col-rownum" style="text-align:center;color:#9ca3af;font-size:11px;user-select:none">${i + 1}</td>` +
+              cols.map(c => `<td>${escHtml(row[c] ?? "")}</td>`).join("") + "</tr>";
     }
-    html += `<tr style="height:${botPad}px"><td colspan="${cols.length}" style="padding:0;border:none"></td></tr>`;
+    html += `<tr style="height:${botPad}px"><td colspan="${spanAll}" style="padding:0;border:none"></td></tr>`;
     tbody.innerHTML = html;
   }
 
@@ -166,11 +187,12 @@ function _renderTable(containerId, tableId) {
   if (tableId === "tbl-events") {
     _syncShipmentsFromEventTable();
   }
-  // ── After rendering the shipments table, refresh LP breakdown ──
+  // ── After rendering the shipments table, refresh LP breakdown + total ──
   if (tableId === "tbl-ship") {
     const rows = _filteredRows("tbl-ship");
     const cols = _tableState["tbl-ship"]?.cols || [];
-    _renderShipLpBreakdown(rows, cols);
+    _renderShipLpBreakdown(rows, cols, _shipSourceTactics);
+    _renderShipTotal(rows);
   }
 }
 
@@ -337,19 +359,21 @@ function openColFilter(evt, tableId, colName, containerId) {
   const isAsc  = st.col === colIdx && st.dir === 1;
   const isDesc = st.col === colIdx && st.dir === -1;
 
-  // Split: checked items first, then unchecked — so reopening shows active filters at top
-  const checkedVals   = vals.filter(v => active.has(v));
-  const uncheckedVals = vals.filter(v => !active.has(v));
+  // If no filter is active yet, treat every value as checked (all-selected = no filter)
+  const allCheckedByDefault = active.size === 0;
 
-  const makeItem = (v, chk) =>
-    `<label class="cf-item"><input type="checkbox" value="${escHtml(v)}" ${chk}> ${escHtml(v) || "<em style='color:#aaa'>(blank)</em>"}</label>`;
+  // When a filter IS active: only render the selected values (hide the rest).
+  // When no filter: render all values checked.
+  const checkedVals   = allCheckedByDefault ? vals : vals.filter(v => active.has(v));
+  const uncheckedVals = [];   // never show unselected items on open
 
-  const checkedHtml   = checkedVals.map(v => makeItem(v, "checked")).join("");
-  const uncheckedHtml = uncheckedVals.map(v => makeItem(v, "")).join("");
-  const dividerHtml   = checkedVals.length && uncheckedVals.length
-    ? `<hr class="cf-checked-divider">`
-    : "";
-  const items = checkedHtml + dividerHtml + uncheckedHtml;
+  const makeItem = (v, chk, hidden) =>
+    `<label class="cf-item"${hidden ? ' style="display:none"' : ''}><input type="checkbox" value="${escHtml(v)}" ${chk}> ${escHtml(v) || "<em style='color:#aaa'>(blank)</em>"}</label>`;
+
+  const checkedHtml   = checkedVals.map(v => makeItem(v, "checked", false)).join("");
+  // Render unchecked items hidden so _refreshList can reveal them on search
+  const hiddenHtml    = allCheckedByDefault ? "" : vals.filter(v => !active.has(v)).map(v => makeItem(v, "", true)).join("");
+  const items = checkedHtml + hiddenHtml;
 
   const panel = document.createElement("div");
   panel.className = "col-filter-panel";
@@ -370,6 +394,7 @@ function openColFilter(evt, tableId, colName, containerId) {
       <button class="cf-btn" data-action="selnone">Clear</button>
     </div>
     <div class="cf-search-wrap"><input class="cf-search" placeholder="Search…"></div>
+    ${!allCheckedByDefault ? `<label class="cf-add-toggle"><input type="checkbox" id="cf-add-cb"> Add to existing filter</label>` : ""}
     <div class="cf-list">${items}</div>
     <div class="cf-footer">
       <button class="cf-apply">OK</button>
@@ -414,20 +439,24 @@ function openColFilter(evt, tableId, colName, containerId) {
       const cb = li.querySelector("input");
       const lo = cb.value.toLowerCase();
 
-      // Auto-check when there are tokens and the value is an exact match for any of them
-      if (tokens.length > 0 && tokens.some(t => lo === t.toLowerCase())) {
-        cb.checked = true;
-      }
-
-      // Show item if no search, or if it matches any token
       if (tokens.length === 0) {
-        li.style.display = "";
+        if (allCheckedByDefault) {
+          // No active filter — show everything checked
+          cb.checked = true;
+          li.style.display = "";
+        } else {
+          // Filter is active — show only the selected values, hide the rest
+          const isSelected = active.has(cb.value);
+          cb.checked = isSelected;
+          li.style.display = isSelected ? "" : "none";
+        }
       } else {
         const matches = tokens.some(t => lo.includes(t.toLowerCase()));
+        // Only items that match the search are shown AND checked
+        cb.checked = matches;
         li.style.display = matches ? "" : "none";
       }
 
-      // Reset any leftover styles from previous version
       li.style.opacity = "";
       li.classList.remove("cf-item-checked");
     });
@@ -444,17 +473,24 @@ function openColFilter(evt, tableId, colName, containerId) {
     }, 0);
   });
 
-  // ── OK: apply only checked items; empty checked = clear filter ──
+  // ── OK: apply checked items; merge into existing if "Add to existing filter" is ticked ──
   panel.querySelector(".cf-apply").addEventListener("click", () => {
-    // Only collect visible checked items — hidden items (from search) are ignored
-    const visibleChecked = [...panel.querySelectorAll(".cf-item input:checked")]
-      .filter(cb => cb.closest(".cf-item").style.display !== "none")
-      .map(cb => cb.value);
-    // Also collect any items checked before a search narrowed the list
     const allChecked = [...panel.querySelectorAll(".cf-list input:checked")].map(cb => cb.value);
-    // Use all checked (preserves checks made before/after search)
+    const addToggle  = panel.querySelector("#cf-add-cb");
+    const addMode    = addToggle && addToggle.checked;
+
     if (!_filterState[tableId]) _filterState[tableId] = {};
-    _filterState[tableId][colName] = allChecked.length === 0 ? null : new Set(allChecked);
+
+    let finalSet;
+    if (addMode) {
+      // Merge: existing selections + newly checked items
+      finalSet = new Set([...active, ...allChecked]);
+    } else {
+      finalSet = new Set(allChecked);
+    }
+
+    // If everything is selected (or nothing), remove the filter entirely
+    _filterState[tableId][colName] = (finalSet.size === 0 || finalSet.size === vals.length) ? null : finalSet;
     _renderTable(containerId, tableId);
     closeColFilter();
   });
@@ -929,6 +965,7 @@ async function runShipmentSearch() {
     lp_list:       parseInput(body.lp),
     item_list:     parseInput(body.item),
     event_tactics: body.event_tactics,
+    ship_files:    body.ship_files,
   };
 
   try {
@@ -954,35 +991,170 @@ function renderShipments(data) {
     info.innerHTML = "";
   }
 
+  buildTable("ship-table-wrap", cols, rows, "tbl-ship");
+  _buildShipSourceFilter(rows, cols, tactics);   // also clears stale __source__ filter
+  _renderShipDownloadStrip(rows);                // initial strip uses all rows (no source filter yet)
+  _renderShipTotal(rows);
+  _renderShipLpBreakdown(rows, cols, tactics);
+}
+
+// ── Source-file filter for shipments ─────────────────────────────────
+let _shipSourceTactics = [];  // tactics list from last render, needed for LP breakdown refresh
+
+function _buildShipSourceFilter(rows, cols, tactics) {
+  _shipSourceTactics = tactics;
+  const panel = document.getElementById("ship-source-filter");
+  const chipsEl = document.getElementById("ship-source-chips");
+  if (!panel || !chipsEl) return;
+
+  // Clear any stale __source__ filter from a previous search
+  if (_filterState["tbl-ship"]) delete _filterState["tbl-ship"]["__source__"];
+
+  // Collect unique source files present in results
+  const sources = [...new Set(rows.map(r => r["__source__"]).filter(Boolean))].sort();
+
+  if (sources.length < 2) {
+    panel.style.display = "none";
+    return;
+  }
+
+  panel.style.display = "";
+  chipsEl.innerHTML = sources.map(src => `
+    <label class="file-chip" style="cursor:pointer">
+      <input type="checkbox" name="ship-src" value="${escHtml(src)}" checked
+             onchange="_onShipSourceChange()">
+      ${escHtml(src)}
+    </label>`).join("");
+}
+
+function _onShipSourceChange() {
+  const checked    = [...document.querySelectorAll('input[name="ship-src"]:checked')].map(x => x.value);
+  const allSources = [...document.querySelectorAll('input[name="ship-src"]')].map(x => x.value);
+  const fs = _filterState["tbl-ship"] = _filterState["tbl-ship"] || {};
+  if (checked.length === allSources.length) {
+    delete fs["__source__"];
+  } else {
+    fs["__source__"] = new Set(checked);
+  }
+  _renderTable("ship-table-wrap", "tbl-ship");
+  const visibleRows = _filteredRows("tbl-ship");
+  _renderShipDownloadStrip(visibleRows);
+  _renderShipLpBreakdown(visibleRows, (_tableState["tbl-ship"] || {}).cols || [], _shipSourceTactics);
+  _renderShipTotal(visibleRows);
+}
+
+// Re-render the tactic pills + download buttons based on currently visible rows
+function _renderShipDownloadStrip(visibleRows) {
   const strip = document.getElementById("ship-downloads");
+  if (!strip || !_shipResult) return;
 
-  if (!rows.length) {
+  const allTactics = _shipResult.tactics || [];
+  if (!visibleRows.length) {
     strip.innerHTML = `<span style="color:#57606a;font-size:13px">No rows to download.</span>`;
-  } else if (tactics.length > 1) {
-    const withRows    = tactics.filter(t => rows.some(r => String(r["TACTIC ID"] ?? "").trim() === t.trim()));
-    const withoutRows = tactics.filter(t => !rows.some(r => String(r["TACTIC ID"] ?? "").trim() === t.trim()));
+    return;
+  }
 
-    const tacticPills = [
-      ...withRows.map(t =>
-        `<span style="display:inline-flex;align-items:center;gap:4px;background:#dcfce7;border:1px solid #86efac;border-radius:4px;padding:2px 8px;font-size:11px;margin:2px">✅ ${escHtml(t)}</span>`),
-      ...withoutRows.map(t =>
-        `<span style="display:inline-flex;align-items:center;gap:4px;background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;padding:2px 8px;font-size:11px;margin:2px">⚠️ ${escHtml(t)} (no rows)</span>`),
-    ].join("");
+  if (allTactics.length <= 1) {
+    const fname = allTactics.length === 1
+      ? allTactics[0].replace(/[^\w\-]/g, "") + "_POP.csv"
+      : "shipments_POP.csv";
+    strip.innerHTML = `<button class="btn-success btn-sm" onclick="downloadShipment('','${escHtml(fname)}')">⬇️ Download ${escHtml(fname)}</button>`;
+    return;
+  }
 
+  // Multi-tactic: check which tactics have rows in the VISIBLE set
+  const withRows    = allTactics.filter(t => visibleRows.some(r => String(r["TACTIC ID"] ?? "").trim() === t.trim()));
+  const withoutRows = allTactics.filter(t => !visibleRows.some(r => String(r["TACTIC ID"] ?? "").trim() === t.trim()));
+
+  const tacticPills = [
+    ...withRows.map(t =>
+      `<span style="display:inline-flex;align-items:center;gap:4px;background:#dcfce7;border:1px solid #86efac;border-radius:4px;padding:2px 8px;font-size:11px;margin:2px">✅ ${escHtml(t)}</span>`),
+    ...withoutRows.map(t =>
+      `<span style="display:inline-flex;align-items:center;gap:4px;background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;padding:2px 8px;font-size:11px;margin:2px">⚠️ ${escHtml(t)} (filtered out)</span>`),
+  ].join("");
+
+  if (withRows.length === 1) {
+    const singleTactic = withRows[0];
+    const fname = singleTactic.replace(/[^\w\-]/g, "") + "_POP.csv";
     strip.innerHTML = `
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px">
-        <button class="btn-success btn-sm" onclick="downloadShipment('','ALL_TACTICS_POP.csv')">⬇️ Download ALL (combined)</button>
-        <button class="btn-primary btn-sm" onclick="downloadAllSeparate()">⬇️ Download ALL (separate files)</button>
+        <button class="btn-success btn-sm" onclick="downloadShipment('${escHtml(singleTactic)}','${escHtml(fname)}')">⬇️ Download ${escHtml(fname)}</button>
         <span style="font-size:11px;font-weight:600;color:#57606a;margin-left:4px">Tactics:</span>
         ${tacticPills}
       </div>`;
-  } else {
-    const fname = tactics.length === 1 ? tactics[0].replace(/[^\w\-]/g, "") + "_POP.csv" : "shipments_POP.csv";
-    strip.innerHTML = `<button class="btn-success btn-sm" onclick="downloadShipment('','${escHtml(fname)}')">⬇️ Download ${escHtml(fname)}</button>`;
+    return;
   }
 
-  buildTable("ship-table-wrap", cols, rows, "tbl-ship");
-  _renderShipLpBreakdown(rows, cols, tactics);
+  strip.innerHTML = `
+    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px">
+      <button class="btn-success btn-sm" onclick="downloadShipment('','ALL_TACTICS_POP.csv')">⬇️ Download ALL (combined)</button>
+      <button class="btn-primary btn-sm" onclick="downloadAllSeparate()">⬇️ Download ALL (separate files)</button>
+      <span style="font-size:11px;font-weight:600;color:#57606a;margin-left:4px">Tactics:</span>
+      ${tacticPills}
+    </div>`;
+}
+
+function _renderShipTotal(rows) {
+  const el = document.getElementById("ship-total-bar");
+  if (!el) return;
+  if (!rows || !rows.length) { el.style.display = "none"; return; }
+
+  const QTY_COL    = "SALES INVOICE QTY";
+  const TACTIC_COL = "TACTIC ID";
+
+  const hasQty = rows.some(r => r[QTY_COL] != null && r[QTY_COL] !== "");
+
+  const tactics = [...new Set(rows.map(r => String(r[TACTIC_COL] ?? "").trim()).filter(Boolean))].sort();
+
+  const fmtQty = n => n.toLocaleString();
+  const sumQty = arr => arr.reduce((s, r) => s + (parseFloat(r[QTY_COL]) || 0), 0);
+
+  // ── single tactic — compact one-liner ──
+  if (tactics.length <= 1) {
+    const label   = tactics.length === 1 ? tactics[0] : "Total";
+    const sources = [...new Set(rows.map(r => r["__source__"]).filter(Boolean))].sort();
+    const srcPills = sources.map(s => `<span class="total-src-pill">${escHtml(s)}</span>`).join("");
+    const qtyPart = hasQty ? `<span class="stot-cell"><span class="stot-lbl">Qty</span><span class="stot-val">${fmtQty(sumQty(rows))}</span></span>` : "";
+    el.style.display = "";
+    el.innerHTML = `<div class="stot-oneliner">
+      <span class="stot-tactic">${escHtml(label)}</span>
+      <span class="total-src-wrap">${srcPills}</span>
+      <span class="stot-cell"><span class="stot-lbl">Rows</span><span class="stot-val">${rows.length.toLocaleString()}</span></span>
+      ${qtyPart}
+    </div>`;
+    return;
+  }
+
+  // ── multiple tactics — compact table ──
+  const qtyTh = hasQty ? `<th class="stot-num">Qty</th>` : "";
+
+  const dataRows = tactics.map(t => {
+    const sub     = rows.filter(r => String(r[TACTIC_COL] ?? "").trim() === t);
+    const sources = [...new Set(sub.map(r => r["__source__"]).filter(Boolean))].sort();
+    const srcPills = sources.map(s => `<span class="total-src-pill">${escHtml(s)}</span>`).join("");
+    const qtyTd = hasQty ? `<td class="stot-num">${fmtQty(sumQty(sub))}</td>` : "";
+    return `<tr>
+      <td class="stot-tactic-cell">${escHtml(t)}</td>
+      <td><span class="total-src-wrap">${srcPills}</span></td>
+      <td class="stot-num">${sub.length.toLocaleString()}</td>
+      ${qtyTd}
+    </tr>`;
+  }).join("");
+
+  const qtyFoot = hasQty ? `<td class="stot-num stot-grand">${fmtQty(sumQty(rows))}</td>` : "";
+  const footRow = `<tr class="stot-foot">
+    <td class="stot-grand" colspan="2">GRAND TOTAL</td>
+    <td class="stot-num stot-grand">${rows.length.toLocaleString()}</td>
+    ${qtyFoot}
+  </tr>`;
+
+  el.style.display = "";
+  el.innerHTML = `
+    <table class="stot-table">
+      <thead><tr><th>Tactic</th><th>Source File(s)</th><th class="stot-num">Rows</th>${qtyTh}</tr></thead>
+      <tbody>${dataRows}</tbody>
+      <tfoot>${footRow}</tfoot>
+    </table>`;
 }
 
 function _renderShipLpBreakdown(rows, cols, tactics) {
@@ -990,15 +1162,18 @@ function _renderShipLpBreakdown(rows, cols, tactics) {
   if (!breakdown) return;
 
   // Resolve LP column
-  const lpCol = (cols || []).find(c =>
+  let lpCol = (cols || []).find(c =>
     (c.toUpperCase().includes("L5") && c.toUpperCase().includes("PROMOTED")) ||
-    c.toUpperCase().includes("L5_PROMOTED")
+    c.toUpperCase().includes("L5_PROMOTED") ||
+    c.toUpperCase().includes("GROUP CODE")
   );
 
   const colFilterState = _filterState["tbl-ship"] || {};
 
   // Gather LP values to check
-  const inputLPs    = parseInput(document.getElementById("ship-lp")?.value || "");
+  const inputLPs     = parseInput(document.getElementById("ship-lp")?.value || "");
+  const mainLPs      = parseInput(document.getElementById("lp-input")?.value || "");
+  const refLPs       = _searchResult?.effective_lps || [];
   const colFilterLPs = lpCol && colFilterState[lpCol] ? [...colFilterState[lpCol]] : [];
 
   // Pattern fallback
@@ -1015,43 +1190,76 @@ function _renderShipLpBreakdown(rows, cols, tactics) {
     }
   }
 
-  const searchedLPs = [...new Set([...inputLPs, ...colFilterLPs, ...extraFilterLPs])];
+  let searchedLPs = [...new Set([...inputLPs, ...mainLPs, ...refLPs, ...colFilterLPs, ...extraFilterLPs])];
   if (searchedLPs.length === 0) { breakdown.style.display = "none"; return; }
+
+  // Fallback scan if column not yet identified
+  if (!resolvedLpCol && !lpCol) {
+    lpCol = (cols || []).find(c => {
+      const sample = (rows || []).slice(0, 100).map(r => String(r[c] ?? "").trim());
+      return searchedLPs.some(lp => sample.includes(lp));
+    });
+  }
 
   const col = resolvedLpCol || lpCol;
   if (!col) { breakdown.style.display = "none"; return; }
 
-  const tacticList = tactics && tactics.length > 0 ? tactics : null;
+  const tacticList = (tactics && tactics.length > 0) ? tactics : (_shipResult?.tactics || null);
+
+  const QTY_COL = "SALES INVOICE QTY";
+  const sumQty = arr => arr.reduce((s, r) => {
+    const val = parseFloat(String(r[QTY_COL] ?? "").replace(/,/g, ""));
+    return s + (isNaN(val) ? 0 : val);
+  }, 0);
+
+  const getLpRows = (rowList, targetLp) => {
+    const targetLower = targetLp.toLowerCase();
+    return rowList.filter(r => {
+      const val = String(r[col] ?? "").trim().toLowerCase();
+      if (val === targetLower) return true;
+      for (const alias of ["L5 PROMOTED PRODUCT GROUP CODE", "L5_PROMOTED_PRODUCT_GROUP_CODE (2)"]) {
+        if (r[alias] != null && String(r[alias]).trim().toLowerCase() === targetLower) return true;
+      }
+      return false;
+    });
+  };
 
   // Single tactic or no tactic distinction — flat list
   if (!tacticList || tacticList.length <= 1) {
-    const presentSet = new Set(rows.map(r => String(r[col] ?? "").trim()).filter(Boolean));
-    const inShip     = searchedLPs.filter(lp => presentSet.has(lp));
-    const notInShip  = searchedLPs.filter(lp => !presentSet.has(lp));
-    const inHtml     = inShip.map(lp => _lpPill(lp, true)).join("");
-    const notHtml    = notInShip.map(lp => _lpPill(lp, false)).join("");
+    const pills = searchedLPs.map(lp => {
+      const lpRows = getLpRows(rows, lp);
+      const isPresent = lpRows.length > 0;
+      const qty = isPresent ? sumQty(lpRows) : 0;
+      return _lpPill(lp, isPresent, qty, lpRows.length);
+    }).join("");
+
     breakdown.style.display = "";
     breakdown.innerHTML = `
-      <div style="font-size:12px;font-weight:600;color:#57606a;margin-bottom:6px">🔍 LP check</div>
-      <div style="display:flex;flex-wrap:wrap;gap:4px">${inHtml}${notHtml}</div>`;
+      <div style="font-size:12px;font-weight:600;color:#57606a;margin-bottom:6px">🔍 LP check & Qty</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px">${pills}</div>`;
     return;
   }
 
-  // Multiple tactics — show LP breakdown per tactic
+  // Multiple tactics — show LP breakdown per tactic + overall total
   const tacticRows = tactic => rows.filter(r => String(r["TACTIC ID"] ?? "").trim() === tactic.trim());
 
+  const totalLpPills = searchedLPs.map(lp => {
+    const lpRows = getLpRows(rows, lp);
+    const isPresent = lpRows.length > 0;
+    const qty = isPresent ? sumQty(lpRows) : 0;
+    return _lpPill(lp, isPresent, qty, lpRows.length);
+  }).join("");
+
   const sections = tacticList.map(t => {
-    const tRows      = tacticRows(t);
-    const presentSet = new Set(tRows.map(r => String(r[col] ?? "").trim()).filter(Boolean));
-    const inT        = searchedLPs.filter(lp => presentSet.has(lp));
-    const notInT     = searchedLPs.filter(lp => !presentSet.has(lp));
-    const hasRows    = tRows.length > 0;
+    const tRows = tacticRows(t);
+    const pills = searchedLPs.map(lp => {
+      const lpRows = getLpRows(tRows, lp);
+      const isPresent = lpRows.length > 0;
+      const qty = isPresent ? sumQty(lpRows) : 0;
+      return _lpPill(lp, isPresent, qty, lpRows.length);
+    }).join("");
 
-    const pills = [
-      ...inT.map(lp => _lpPill(lp, true)),
-      ...notInT.map(lp => _lpPill(lp, false)),
-    ].join("");
-
+    const hasRows = tRows.length > 0;
     const tacticBadge = hasRows
       ? `<span style="background:#dcfce7;border:1px solid #86efac;border-radius:4px;padding:1px 8px;font-size:11px;font-weight:700;color:#166534">✅ ${escHtml(t)}</span>`
       : `<span style="background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;padding:1px 8px;font-size:11px;font-weight:700;color:#991b1b">⚠️ ${escHtml(t)} (no rows)</span>`;
@@ -1065,15 +1273,24 @@ function _renderShipLpBreakdown(rows, cols, tactics) {
 
   breakdown.style.display = "";
   breakdown.innerHTML = `
-    <div style="font-size:12px;font-weight:600;color:#57606a;margin-bottom:8px">🔍 LP check — by tactic</div>
+    <div style="font-size:12px;font-weight:600;color:#57606a;margin-bottom:6px">🔍 LP check & Qty (Total)</div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px">${totalLpPills}</div>
+    <div style="font-size:12px;font-weight:600;color:#57606a;margin-bottom:8px">🔍 LP check & Qty — by tactic</div>
     ${sections}`;
 }
 
-function _lpPill(lp, present) {
+function _lpPill(lp, present, qty, rowCount) {
   const bg     = present ? "#dcfce7" : "#fee2e2";
   const border = present ? "#86efac" : "#fca5a5";
   const icon   = present ? "✅" : "⚠️";
-  return `<span style="display:inline-flex;align-items:center;gap:3px;background:${bg};border:1px solid ${border};border-radius:4px;padding:2px 8px;font-size:11px;margin:1px">${icon} ${escHtml(lp)}</span>`;
+  const qtyFormatted = (qty != null ? Number(qty).toLocaleString() : "0");
+  const qtyPart = present
+    ? ` · <span style="font-weight:700;color:#166534">Qty: ${qtyFormatted}</span>`
+    : ` · <span style="font-weight:500;color:#991b1b">Qty: 0</span>`;
+  const countPart = (present && rowCount != null)
+    ? ` <span style="color:#57606a;font-size:10px">(${rowCount.toLocaleString()} row${rowCount !== 1 ? "s" : ""})</span>`
+    : "";
+  return `<span style="display:inline-flex;align-items:center;gap:3px;background:${bg};border:1px solid ${border};border-radius:4px;padding:2px 8px;font-size:11px;margin:2px">${icon} <span>${escHtml(lp)}</span>${qtyPart}${countPart}</span>`;
 }
 
 function rowsToCsv(cols, rows) {
@@ -1100,29 +1317,44 @@ function downloadCsv(csvStr, filename) {
 function downloadShipment(tactic, filename) {
   if (!_shipResult) return;
   const cols = _shipResult.cols || [];
-  let   rows = _shipResult.rows || [];
-  // Filter to a single tactic when requested
+  // Always use the currently filtered (visible) rows so source-file selection is respected
+  let rows = _filteredRows("tbl-ship");
   if (tactic) rows = rows.filter(r => String(r["TACTIC ID"] ?? "").trim() === tactic.trim());
   downloadCsv(rowsToCsv(cols, rows), filename);
 }
 
-function downloadAllSeparate() {
-  if (!_shipResult) return;
-  const cols    = _shipResult.cols || [];
-  const allRows = _shipResult.rows || [];
+async function downloadAllSeparate() {
+  if (!_shipResult || !_lastShipSearch) return;
 
-  // Only download tactics that actually have rows in the current result
-  const tacticsWithRows = (_shipResult.tactics || []).filter(t => {
-    return allRows.some(r => String(r["TACTIC ID"] ?? "").trim() === t.trim());
+  const allRows = _filteredRows("tbl-ship");
+  const tacticsWithRows = (_shipResult.tactics || []).filter(t =>
+    allRows.some(r => String(r["TACTIC ID"] ?? "").trim() === t.trim())
+  );
+  if (!tacticsWithRows.length) return;
+
+  const shipSrcCheckboxes = [...document.querySelectorAll('input[name="ship-src"]')];
+  let shipFiles = _lastShipSearch.ship_files;
+  if (shipSrcCheckboxes.length > 0) {
+    shipFiles = [...document.querySelectorAll('input[name="ship-src"]:checked')].map(x => x.value);
+  }
+
+  const payload = { ..._lastShipSearch, tactics: tacticsWithRows, ship_files: shipFiles };
+  const res = await fetch("/api/download_shipments_zip", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
 
-  let delay = 0;
-  tacticsWithRows.forEach(t => {
-    const safe = t.replace(/[^\w\-]/g, "");
-    const rows = allRows.filter(r => String(r["TACTIC ID"] ?? "").trim() === t.trim());
-    setTimeout(() => downloadCsv(rowsToCsv(cols, rows), `${safe}_POP.csv`), delay);
-    delay += 400;
-  });
+  if (!res.ok) { alert("ZIP download failed: " + (await res.text())); return; }
+
+  const blob = await res.blob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href = url; a.download = "shipments_separate.zip";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // ── File management: upload, delete, drag-drop ─────────────

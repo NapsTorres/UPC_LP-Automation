@@ -5,6 +5,7 @@ import re
 import secrets
 import time
 import threading
+import zipfile
 
 import pandas as pd
 from flask import Flask, jsonify, render_template, request, send_file, session
@@ -404,11 +405,17 @@ def api_shipments():
         sort_cols = ["__LP__"] + ([SHIP_TACTIC_COL] if SHIP_TACTIC_COL in sv.columns else [])
         sv = sv.sort_values(sort_cols, kind="mergesort").drop(columns=["__LP__"])
 
-    sv = reorder_columns(drop_index_like_columns(sv.drop(columns=["__source__"], errors="ignore")), SHIP_ALL_COLUMNS)
+    # Preserve __source__ in rows for client-side file filtering, but exclude from displayed cols
+    source_col = sv["__source__"].tolist() if "__source__" in sv.columns else []
+    sv_display = reorder_columns(drop_index_like_columns(sv.drop(columns=["__source__"], errors="ignore")), SHIP_ALL_COLUMNS)
+
+    rows_with_source = _df_to_records(sv_display)
+    for i, src in enumerate(source_col):
+        rows_with_source[i]["__source__"] = src
 
     return jsonify({
-        "rows":    _df_to_records(sv),
-        "cols":    list(sv.columns),
+        "rows":    rows_with_source,
+        "cols":    list(sv_display.columns),
         "tactics": sorted(set(active_tactics)),
     })
 
@@ -425,10 +432,16 @@ def download_shipments():
     lp_list       = [str(l).strip() for l in body.get("lp_list",       [])]
     item_list     = [str(i).strip() for i in body.get("item_list",     [])]
     event_tactics = [str(t).strip() for t in body.get("event_tactics", [])]
+    ship_files    = body.get("ship_files", None)
 
-    sv = dbs["shipments"]
-    if sv.empty:
+    raw_sv = dbs["shipments"]
+    if raw_sv.empty:
         return ("No shipment data loaded.", 404)
+
+    if "__source__" in raw_sv.columns and ship_files is not None:
+        sv = raw_sv[raw_sv["__source__"].isin(ship_files)].copy()
+    else:
+        sv = raw_sv.copy()
 
     has_direct = bool(tactic_list or lp_list or item_list)
     if has_direct:
@@ -457,6 +470,69 @@ def download_shipments():
         mimetype="text/csv",
         as_attachment=True,
         download_name=filename,
+    )
+
+
+@app.route("/api/download_shipments_zip", methods=["POST"])
+def download_shipments_zip():
+    sid  = _sess_id()
+    dbs  = _get_dbs(sid)
+    body = request.get_json(force=True)
+
+    tactic_list   = [str(t).strip() for t in body.get("tactic_list",   [])]
+    lp_list       = [str(l).strip() for l in body.get("lp_list",       [])]
+    item_list     = [str(i).strip() for i in body.get("item_list",     [])]
+    event_tactics = [str(t).strip() for t in body.get("event_tactics", [])]
+    tactics_order = [str(t).strip() for t in body.get("tactics",       [])]
+    ship_files    = body.get("ship_files", None)
+
+    raw_sv = dbs["shipments"]
+    if raw_sv.empty:
+        return ("No shipment data loaded.", 404)
+
+    if "__source__" in raw_sv.columns and ship_files is not None:
+        sv = raw_sv[raw_sv["__source__"].isin(ship_files)].copy()
+    else:
+        sv = raw_sv.copy()
+
+    has_direct = bool(tactic_list or lp_list or item_list)
+    if has_direct:
+        if tactic_list and SHIP_TACTIC_COL in sv.columns:
+            sv = sv[sv[SHIP_TACTIC_COL].isin(tactic_list)]
+        if lp_list:
+            lp_s = coalesce_series(sv, SHIP_LP_ALIASES).astype(str).str.strip()
+            sv = sv[lp_s.isin(lp_list)]
+        if item_list and "ITEM NUMBER" in sv.columns:
+            sv = sv[sv["ITEM NUMBER"].astype(str).str.strip().isin(item_list)]
+    else:
+        if event_tactics and SHIP_TACTIC_COL in sv.columns:
+            sv = sv[sv[SHIP_TACTIC_COL].isin(event_tactics)]
+        else:
+            sv = sv.iloc[0:0]
+
+    sv = reorder_columns(drop_index_like_columns(sv.drop(columns=["__source__"], errors="ignore")), SHIP_ALL_COLUMNS)
+
+    if sv.empty:
+        return ("No matching shipments found.", 404)
+
+    # Build one CSV per tactic inside a ZIP
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for tactic in tactics_order:
+            subset = sv[sv[SHIP_TACTIC_COL].astype(str).str.strip() == tactic] if SHIP_TACTIC_COL in sv.columns else sv
+            if subset.empty:
+                continue
+            safe_name = re.sub(r"[^\w\-]", "", tactic) + "_POP.csv"
+            csv_buf = io.StringIO()
+            subset.to_csv(csv_buf, index=False)
+            zf.writestr(safe_name, csv_buf.getvalue())
+
+    zip_buf.seek(0)
+    return send_file(
+        zip_buf,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name="shipments_separate.zip",
     )
 
 
@@ -559,4 +635,4 @@ def _df_to_records(df: pd.DataFrame) -> list[dict]:
 
 # ========================== Run ==========================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="127.0.0.1", port=5000, debug=False)
